@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
-import os, uuid, re, glob, threading, time, shutil, subprocess
+import os, uuid, re, glob, json, threading, time, shutil, subprocess
 import requests as req_lib
 from collections import defaultdict
 
@@ -23,6 +23,43 @@ jobs          = {}
 jobs_lock     = threading.Lock()
 _rate_store   = defaultdict(list)
 _rate_lock    = threading.Lock()
+
+
+def _job_path(job_id):
+    return os.path.join(DOWNLOAD_DIR, f'job_{job_id}.json')
+
+def _save_job(job_id, job):
+    try:
+        with open(_job_path(job_id), 'w') as f:
+            json.dump(job, f)
+    except Exception:
+        pass
+
+def _load_job_from_disk(job_id):
+    try:
+        with open(_job_path(job_id)) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def _load_all_jobs():
+    for p in glob.glob(os.path.join(DOWNLOAD_DIR, 'job_*.json')):
+        try:
+            with open(p) as f:
+                job = json.load(f)
+            job_id = os.path.basename(p)[4:-5]
+            if job.get('status') in ('pending', 'processing'):
+                job['status'] = 'error'
+                job['error']  = 'Server restarted. Please try again.'
+                _save_job(job_id, job)
+            if job.get('status') == 'done' and not os.path.exists(job.get('file', '')):
+                os.remove(p)
+                continue
+            jobs[job_id] = job
+        except Exception:
+            pass
+
+_load_all_jobs()
 
 
 # ── tikwm API ────────────────────────────────────────────────────────────────
@@ -82,6 +119,7 @@ def make_filename(title, ext='mp4'):
 def _set_job(job_id, updates):
     with jobs_lock:
         jobs[job_id].update(updates)
+        _save_job(job_id, jobs[job_id])
 
 def schedule_cleanup(job_id, path):
     def _cleanup():
@@ -260,6 +298,11 @@ def get_status(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
     if not job:
+        job = _load_job_from_disk(job_id)
+        if job:
+            with jobs_lock:
+                jobs[job_id] = job
+    if not job:
         return jsonify({'error': 'Job not found'}), 404
     return jsonify({k: job.get(k) for k in ('status', 'error', 'filename', 'progress')})
 
@@ -267,6 +310,11 @@ def get_status(job_id):
 def download_file(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
+    if not job:
+        job = _load_job_from_disk(job_id)
+        if job:
+            with jobs_lock:
+                jobs[job_id] = job
     if not job or job['status'] != 'done':
         return jsonify({'error': 'File not ready — please try again.'}), 404
     path, filename = job['file'], job['filename']
