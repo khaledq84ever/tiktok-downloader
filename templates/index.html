@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TikSave — TikTok Video Downloader</title>
+  <meta name="description" content="Download TikTok videos without watermark. Free, fast, no signup required." />
+  <meta property="og:title" content="TikSave — TikTok Video Downloader" />
+  <meta property="og:description" content="Download TikTok videos without watermark. Free, fast, no signup." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+
+    :root {
+      --bg:        #010101;
+      --surface:   #0d0d0d;
+      --surface2:  #161616;
+      --surface3:  #1f1f1f;
+      --border:    #2a2a2a;
+      --border2:   #3a3a3a;
+      --accent:    #fe2c55;
+      --accent2:   #25f4ee;
+      --success:   #10b981;
+      --danger:    #ef4444;
+      --text:      #f5f5f5;
+      --text2:     #aaaaaa;
+      --muted:     #555555;
+      --radius:    18px;
+      --radius-sm: 12px;
+      --max-w:     700px;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(254,44,85,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(37,244,238,0.02) 1px, transparent 1px);
+      background-size: 44px 44px;
+      pointer-events: none; z-index: 0;
+    }
+
+    body::after {
+      content: '';
+      position: fixed; top: -20%; left: 50%;
+      transform: translateX(-50%);
+      width: 900px; height: 600px;
+      background: radial-gradient(ellipse, rgba(254,44,85,0.1) 0%, transparent 65%);
+      pointer-events: none; z-index: 0;
+    }
+
+    header, main, footer { position: relative; z-index: 1; }
+
+    /* ── Header ── */
+    header {
+      padding: clamp(20px,4vw,36px) 24px 0;
+      text-align: center;
+    }
+
+    .logo {
+      display: inline-flex; align-items: center; gap: 10px;
+      text-decoration: none;
+    }
+
+    .logo-icon {
+      width: 38px; height: 38px;
+      background: linear-gradient(135deg, var(--accent), #ff6b8a);
+      border-radius: 11px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; color: #fff;
+      box-shadow: 0 4px 16px rgba(254,44,85,0.4);
+      flex-shrink: 0;
+    }
+
+    .logo-text {
+      font-size: clamp(1.15rem,3.2vw,1.45rem);
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      color: var(--text);
+    }
+
+    .logo-text span {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+
+    .live-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 10px;
+      padding: 5px 13px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      font-size: 0.73rem; font-weight: 700;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+    }
+
+    .live-badge .dot {
+      width: 6px; height: 6px;
+      background: var(--success);
+      border-radius: 50%;
+      animation: blink 2.4s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0.25; }
+    }
+
+    /* ── Main ── */
+    main {
+      flex: 1;
+      display: flex; flex-direction: column; align-items: center;
+      padding: clamp(36px,6vw,60px) 16px 56px;
+    }
+
+    .hero {
+      text-align: center;
+      max-width: 620px; width: 100%;
+    }
+
+    h1 {
+      font-size: clamp(1.9rem,5.8vw,3.2rem);
+      font-weight: 900;
+      line-height: 1.12;
+      letter-spacing: -0.04em;
+    }
+
+    h1 .grad {
+      background: linear-gradient(135deg, var(--accent) 0%, #ff6b8a 40%, var(--accent2) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      margin-top: 14px;
+      color: var(--text2);
+      font-size: clamp(0.9rem,2.5vw,1.05rem);
+      font-weight: 500;
+      line-height: 1.6;
+    }
+
+    /* ── Converter ── */
+    .converter {
+      margin-top: 40px;
+      width: 100%; max-width: var(--max-w);
+    }
+
+    .input-card {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px;
+      display: flex; gap: 6px; align-items: center;
+      transition: border-color 0.25s, box-shadow 0.25s;
+    }
+
+    .input-card:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px rgba(254,44,85,0.1), 0 6px 24px rgba(254,44,85,0.08);
+    }
+
+    .url-input {
+      flex: 1;
+      background: transparent; border: none; outline: none;
+      color: var(--text);
+      font-family: inherit; font-size: 1rem; font-weight: 500;
+      padding: 13px 8px 13px 14px;
+      min-width: 0;
+    }
+
+    .url-input::placeholder { color: var(--muted); font-weight: 400; }
+
+    .btn-clear {
+      flex-shrink: 0;
+      width: 32px; height: 32px;
+      border: none; background: var(--surface2); color: var(--muted);
+      border-radius: 8px; font-size: 0.75rem; cursor: pointer;
+      display: none; align-items: center; justify-content: center;
+      transition: color 0.2s, background 0.2s;
+    }
+    .btn-clear:hover { color: var(--text); background: var(--border); }
+
+    .btn-paste {
+      flex-shrink: 0;
+      padding: 10px 18px;
+      border: 1.5px solid var(--border2); border-radius: var(--radius-sm);
+      background: var(--surface2); color: var(--text2);
+      font-family: inherit; font-size: 0.85rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap; min-height: 46px;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }
+    .btn-paste:hover { border-color: var(--accent); color: var(--text); background: var(--surface3); }
+
+    .btn-primary {
+      flex-shrink: 0;
+      padding: 13px 26px; border: none; border-radius: var(--radius-sm);
+      background: linear-gradient(135deg, var(--accent), #c9003f);
+      color: #fff;
+      font-family: inherit; font-size: clamp(0.9rem,2.5vw,1rem); font-weight: 800;
+      cursor: pointer; white-space: nowrap; min-height: 50px;
+      box-shadow: 0 4px 18px rgba(254,44,85,0.35);
+      transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
+    }
+    .btn-primary:hover { opacity: 0.9; box-shadow: 0 6px 24px rgba(254,44,85,0.5); }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:disabled { opacity: 0.38; cursor: not-allowed; box-shadow: none; }
+
+    /* ── Format selector ── */
+    .quality-label {
+      margin-top: 16px; margin-bottom: 8px;
+      font-size: 0.72rem; font-weight: 800;
+      color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.1em;
+      padding: 0 2px;
+    }
+
+    .quality-selector {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .q-btn {
+      padding: 14px 6px 12px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--muted);
+      font-family: inherit;
+      cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      transition: border-color 0.2s, color 0.2s, background 0.2s, transform 0.15s;
+    }
+    .q-btn:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
+
+    .q-title { font-size: 0.85rem; font-weight: 800; line-height: 1.2; }
+    .q-sub   { font-size: 0.66rem; font-weight: 600; opacity: 0.75; }
+
+    .q-btn.active {
+      border-color: var(--accent);
+      background: rgba(254,44,85,0.12);
+      box-shadow: 0 0 0 1.5px var(--accent), 0 4px 14px rgba(254,44,85,0.2);
+      color: var(--text);
+    }
+    .q-btn.active .q-title { color: #ff8fa3; }
+    .q-btn.active .q-sub   { color: #ff8fa3; }
+
+    .q-btn.audio-btn.active {
+      border-color: var(--accent2);
+      background: rgba(37,244,238,0.1);
+      box-shadow: 0 0 0 1.5px var(--accent2), 0 4px 14px rgba(37,244,238,0.2);
+    }
+    .q-btn.audio-btn.active .q-title { color: var(--accent2); }
+    .q-btn.audio-btn.active .q-sub   { color: var(--accent2); }
+
+    /* ── Error ── */
+    .error-wrap {
+      margin-top: 12px;
+      background: rgba(239,68,68,0.07);
+      border: 1px solid rgba(239,68,68,0.22);
+      border-radius: var(--radius-sm);
+      padding: 13px 16px;
+      display: none;
+      align-items: center; justify-content: space-between; gap: 10px;
+    }
+    .error-msg  { color: var(--danger); font-size: 0.86rem; font-weight: 600; flex: 1; }
+    .btn-retry  {
+      flex-shrink: 0; padding: 7px 16px;
+      border: 1.5px solid var(--danger); border-radius: 8px;
+      background: transparent; color: var(--danger);
+      font-family: inherit; font-size: 0.8rem; font-weight: 700;
+      cursor: pointer; transition: background 0.2s, color 0.2s;
+    }
+    .btn-retry:hover { background: var(--danger); color: #fff; }
+
+    /* ── Video card ── */
+    .video-card {
+      margin-top: 20px;
+      background: var(--surface);
+      border: 1.5px solid var(--border2);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: none;
+      animation: fadeUp 0.38s cubic-bezier(0.16,1,0.3,1);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(254,44,85,0.06);
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .video-card-inner {
+      display: flex; align-items: center; gap: 16px;
+      padding: 16px;
+    }
+
+    .video-thumb {
+      flex-shrink: 0;
+      width: 80px; height: 124px;
+      border-radius: 10px; object-fit: cover;
+      background: var(--surface2);
+    }
+
+    .video-meta { flex: 1; min-width: 0; }
+
+    .video-title {
+      font-size: 0.95rem; font-weight: 700; line-height: 1.4;
+      overflow: hidden; display: -webkit-box;
+      -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    }
+
+    .video-sub {
+      margin-top: 4px;
+      font-size: 0.78rem; font-weight: 500;
+      color: var(--muted);
+    }
+
+    .video-badges {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .quality-badge {
+      padding: 3px 9px; border-radius: 6px;
+      background: rgba(254,44,85,0.15);
+      border: 1px solid rgba(254,44,85,0.28);
+      color: #ff8fa3;
+      font-size: 0.7rem; font-weight: 800; letter-spacing: 0.04em;
+    }
+
+    .card-actions { padding: 0 16px 16px; }
+
+    .progress-wrap {
+      height: 5px; background: var(--surface2);
+      border-radius: 99px; overflow: hidden;
+      margin-bottom: 10px; display: none;
+    }
+
+    .progress-bar {
+      height: 100%; border-radius: 99px; width: 0%;
+      background: linear-gradient(90deg, var(--accent), #ff6b8a, var(--accent2), var(--accent));
+      background-size: 300% 100%;
+      transition: width 0.5s ease;
+      animation: flow 3s linear infinite;
+    }
+
+    @keyframes flow {
+      0%   { background-position: 100% 0; }
+      100% { background-position: -100% 0; }
+    }
+
+    .status-text {
+      font-size: 0.83rem; font-weight: 600; color: var(--muted);
+      margin-bottom: 10px; display: none;
+    }
+
+    /* ── Download button ── */
+    @keyframes pulse-glow {
+      0%,100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.5), 0 6px 22px rgba(16,185,129,0.28); }
+      50%      { box-shadow: 0 0 0 14px rgba(16,185,129,0), 0 6px 22px rgba(16,185,129,0.14); }
+    }
+
+    .btn-download {
+      width: 100%; padding: 17px 14px; border: none;
+      border-radius: var(--radius-sm);
+      background: linear-gradient(135deg, var(--success), #059669);
+      color: #fff;
+      font-family: inherit; font-size: clamp(1rem,3vw,1.12rem); font-weight: 800;
+      cursor: pointer; display: none;
+      align-items: center; justify-content: center; gap: 10px;
+      text-decoration: none; min-height: 58px;
+      box-shadow: 0 6px 22px rgba(16,185,129,0.28);
+      transition: opacity 0.2s;
+    }
+    .btn-download:hover { opacity: 0.92; }
+    .btn-download.pulse { animation: pulse-glow 1.8s ease-in-out infinite; }
+    .btn-download svg { width: 20px; height: 20px; flex-shrink: 0; }
+
+    .btn-row { display: flex; gap: 8px; margin-top: 9px; }
+
+    .btn-copy-link {
+      flex: 1; padding: 12px 10px;
+      border: 1.5px solid var(--border2); border-radius: var(--radius-sm);
+      background: var(--surface2); color: var(--text2);
+      font-family: inherit; font-size: 0.85rem; font-weight: 700;
+      cursor: pointer; display: none;
+      align-items: center; justify-content: center; gap: 6px;
+      min-height: 48px;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }
+    .btn-copy-link:hover { border-color: var(--accent); color: var(--text); }
+    .btn-copy-link.copied { color: var(--success); border-color: var(--success); }
+
+    .btn-share {
+      flex-shrink: 0; padding: 12px 18px;
+      border: 1.5px solid var(--border2); border-radius: var(--radius-sm);
+      background: var(--surface2); color: var(--text2);
+      font-family: inherit; font-size: 0.85rem; font-weight: 700;
+      cursor: pointer; display: none;
+      align-items: center; justify-content: center; gap: 6px;
+      min-height: 48px;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .btn-share:hover { border-color: var(--accent2); color: var(--text); }
+
+    .btn-reset {
+      width: 100%; padding: 12px;
+      border: 1.5px dashed var(--border); border-radius: var(--radius-sm);
+      background: transparent; color: var(--muted);
+      font-family: inherit; font-size: 0.85rem; font-weight: 700;
+      cursor: pointer; min-height: 48px; display: none; margin-top: 9px;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .btn-reset:hover { border-color: var(--accent); color: var(--text); }
+
+    /* ── Footer ── */
+    footer {
+      padding: 24px 20px;
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      gap: 16px; flex-wrap: wrap;
+    }
+
+    .footer-brand {
+      font-size: 0.92rem; font-weight: 900;
+      letter-spacing: -0.03em; color: var(--text);
+    }
+
+    .footer-brand span {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+
+    .footer-divider { color: var(--border2); }
+    .footer-copy { font-size: 0.74rem; color: var(--muted); font-weight: 500; }
+
+    .footer-handle {
+      font-size: 0.85rem; font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      text-decoration: none; transition: opacity 0.2s;
+    }
+    .footer-handle:hover { opacity: 0.72; }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      main   { padding: 28px 14px 44px; }
+      header { padding: 18px 16px 0; }
+    }
+
+    @media (max-width: 480px) {
+      .input-card { flex-wrap: wrap; padding: 10px; gap: 8px; }
+      .url-input  { width: 100%; order: 0; padding: 12px 8px; min-height: 50px; }
+      .btn-paste  { order: 1; flex: 1; min-height: 50px; font-size: 0.92rem; display: none; }
+      .btn-primary{ order: 2; flex: 1; min-height: 50px; }
+      .video-card-inner { flex-direction: column; align-items: stretch; }
+      .video-thumb { width: 100%; height: 200px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="logo" href="/">
+    <div class="logo-icon">♪</div>
+    <span class="logo-text">Tik<span>Save</span></span>
+  </a>
+  <div>
+    <span class="live-badge"><span class="dot"></span> Free &amp; No Signup Required</span>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <h1>Download TikTok<br/><span class="grad">Without Watermark</span></h1>
+    <p class="subtitle">Paste any TikTok link — download video in HD or extract audio</p>
+  </div>
+
+  <div class="converter">
+
+    <div class="input-card">
+      <input type="url" class="url-input" id="urlInput"
+        placeholder="Paste a TikTok link here…"
+        autocomplete="off" autocorrect="off" autocapitalize="off"
+        spellcheck="false" inputmode="url" />
+      <button class="btn-clear" id="btnClear" onclick="clearInput()" title="Clear">✕</button>
+      <button class="btn-paste" id="btnPaste" onclick="pasteUrl()">Paste</button>
+      <button class="btn-primary" id="btnConvert" onclick="handleConvert()">Download</button>
+    </div>
+
+    <p class="quality-label">Format &amp; Quality</p>
+    <div class="quality-selector">
+      <button class="q-btn active" data-fmt="mp4" data-q="hd" onclick="selectQuality(this)">
+        <span class="q-title">MP4 ★</span>
+        <span class="q-sub">HD Best</span>
+      </button>
+      <button class="q-btn" data-fmt="mp4" data-q="sd" onclick="selectQuality(this)">
+        <span class="q-title">MP4</span>
+        <span class="q-sub">SD 480p</span>
+      </button>
+      <button class="q-btn audio-btn" data-fmt="mp3" data-q="hd" onclick="selectQuality(this)">
+        <span class="q-title">MP3</span>
+        <span class="q-sub">Audio</span>
+      </button>
+    </div>
+
+    <div class="error-wrap" id="errorWrap">
+      <span class="error-msg" id="errorMsg"></span>
+      <button class="btn-retry" onclick="handleConvert()">Try again</button>
+    </div>
+
+    <div class="video-card" id="videoCard">
+      <div class="video-card-inner">
+        <img class="video-thumb" id="videoThumb" src="" alt="" />
+        <div class="video-meta">
+          <div class="video-title" id="videoTitle"></div>
+          <div class="video-sub"   id="videoSub"></div>
+          <div class="video-badges">
+            <span class="quality-badge" id="qualityBadge">HD MP4</span>
+          </div>
+        </div>
+      </div>
+      <div class="card-actions">
+        <p class="status-text" id="statusText"></p>
+        <div class="progress-wrap" id="progressWrap">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <a class="btn-download" id="btnDownload" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Download
+        </a>
+        <div class="btn-row">
+          <button class="btn-copy-link" id="btnCopyLink" onclick="copyDownloadLink()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
+              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            Copy link
+          </button>
+          <button class="btn-share" id="btnShare" onclick="shareDownload()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px">
+              <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+            </svg>
+            Share
+          </button>
+        </div>
+        <button class="btn-reset" id="btnReset" onclick="resetForm()">↩ Download another video</button>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<footer>
+  <span class="footer-brand">♪ Tik<span>Save</span></span>
+  <span class="footer-divider">·</span>
+  <span class="footer-copy">For personal use only. Respect copyright laws.</span>
+  <span class="footer-divider">·</span>
+  <a class="footer-handle" href="https://twitter.com/KhaledQ84Ever" target="_blank">@KhaledQ84Ever</a>
+</footer>
+
+<script>
+  let pollTimer = null;
+  let currentDownloadUrl = null;
+  let selectedFmt = localStorage.getItem('tt_fmt') || 'mp4';
+  let selectedQ   = localStorage.getItem('tt_q')   || 'hd';
+
+  const $ = id => document.getElementById(id);
+
+  (function restoreQuality() {
+    const btn = document.querySelector(`.q-btn[data-fmt="${selectedFmt}"][data-q="${selectedQ}"]`);
+    if (btn) {
+      document.querySelectorAll('.q-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+  })();
+
+  function selectQuality(btn) {
+    document.querySelectorAll('.q-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedFmt = btn.dataset.fmt;
+    selectedQ   = btn.dataset.q;
+    localStorage.setItem('tt_fmt', selectedFmt);
+    localStorage.setItem('tt_q',   selectedQ);
+  }
+
+  async function pasteUrl() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        $('urlInput').value = text;
+        updateClearBtn();
+        if (text.includes('tiktok.com')) handleConvert();
+      }
+    } catch { $('urlInput').focus(); }
+  }
+
+  function clearInput() {
+    $('urlInput').value = '';
+    $('btnClear').style.display = 'none';
+    $('urlInput').focus();
+  }
+
+  function updateClearBtn() {
+    $('btnClear').style.display = $('urlInput').value ? 'flex' : 'none';
+  }
+
+  function showError(msg) {
+    $('errorMsg').textContent = msg;
+    $('errorWrap').style.display = 'flex';
+  }
+
+  function hideError() {
+    $('errorWrap').style.display = 'none';
+  }
+
+  function setConverting(on) {
+    $('btnConvert').disabled = on;
+    $('btnConvert').textContent = on ? 'Loading…' : 'Download';
+    $('urlInput').disabled = on;
+  }
+
+  async function handleConvert() {
+    clearInterval(pollTimer);
+    const url = $('urlInput').value.trim();
+    if (!url) { showError('Please paste a TikTok URL'); return; }
+
+    hideError();
+    $('videoCard').style.display    = 'none';
+    $('btnDownload').style.display  = 'none';
+    $('btnCopyLink').style.display  = 'none';
+    $('btnShare').style.display     = 'none';
+    $('btnReset').style.display     = 'none';
+    $('progressWrap').style.display = 'none';
+    $('statusText').style.display   = 'none';
+    currentDownloadUrl = null;
+    setConverting(true);
+
+    try {
+      $('statusText').textContent   = 'Fetching video info…';
+      $('statusText').style.display = 'block';
+
+      const infoRes = await fetch('/info', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      const info = await infoRes.json();
+      $('statusText').style.display = 'none';
+
+      if (!infoRes.ok) { showError(info.error || 'Could not fetch video info'); setConverting(false); return; }
+
+      $('videoThumb').src         = info.thumbnail;
+      $('videoTitle').textContent = info.title || 'TikTok Video';
+      $('videoSub').textContent   = `@${info.uploader}  ·  ${info.duration}`;
+
+      const badgeMap = { 'mp4-hd': 'HD MP4', 'mp4-sd': 'SD MP4', 'mp3-hd': 'MP3 Audio' };
+      $('qualityBadge').textContent = badgeMap[`${selectedFmt}-${selectedQ}`] || 'HD MP4';
+
+      $('videoCard').style.display = 'block';
+
+      const startRes = await fetch('/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: info.url || url, title: info.title,
+          format: selectedFmt, quality: selectedQ })
+      });
+      const startData = await startRes.json();
+      if (!startRes.ok) { showError(startData.error || 'Failed to start download'); setConverting(false); return; }
+
+      pollJob(startData.job_id);
+    } catch {
+      $('statusText').style.display = 'none';
+      showError('Network error. Please try again.');
+      setConverting(false);
+    }
+  }
+
+  const STATUS_MSGS = ['Downloading…', 'Processing video…', 'Almost done…'];
+
+  function pollJob(jobId) {
+    $('progressWrap').style.display = 'block';
+    $('statusText').style.display   = 'block';
+    $('statusText').textContent     = 'Starting download…';
+
+    let fake = 3, msgIdx = 0;
+    $('progressBar').style.width = fake + '%';
+
+    const grow = setInterval(() => {
+      if (fake < 25) { fake += Math.random() * 3; $('progressBar').style.width = fake + '%'; }
+    }, 1500);
+
+    const msgCycle = setInterval(() => {
+      if ($('statusText').textContent.startsWith('Downloading')) return;
+      msgIdx = (msgIdx + 1) % STATUS_MSGS.length;
+      $('statusText').textContent = STATUS_MSGS[msgIdx];
+    }, 4000);
+
+    let attempts = 0;
+    pollTimer = setInterval(async () => {
+      if (++attempts > 150) {
+        clearInterval(pollTimer); clearInterval(grow); clearInterval(msgCycle);
+        showError('Timed out. Please try again.'); setConverting(false);
+        return;
+      }
+      try {
+        const res  = await fetch(`/status/${jobId}`);
+        const data = await res.json();
+
+        if (data.progress != null && data.progress > fake) {
+          clearInterval(grow);
+          fake = data.progress;
+          $('progressBar').style.width = fake + '%';
+          if (data.progress < 95)
+            $('statusText').textContent = `Downloading… ${data.progress}%`;
+        }
+
+        if (data.status === 'done') {
+          clearInterval(pollTimer); clearInterval(grow); clearInterval(msgCycle);
+          $('progressBar').style.width = '100%';
+          $('statusText').textContent  = '✓ Done! Starting download…';
+
+          setTimeout(() => {
+            $('progressWrap').style.display = 'none';
+            $('statusText').style.display   = 'none';
+
+            const dlUrl = `/download/${jobId}`;
+            currentDownloadUrl = dlUrl;
+
+            const tmp = document.createElement('a');
+            tmp.href = dlUrl; tmp.download = data.filename || 'tiktok.mp4';
+            document.body.appendChild(tmp); tmp.click(); document.body.removeChild(tmp);
+
+            const dl = $('btnDownload');
+            dl.href = dlUrl; dl.download = data.filename || 'tiktok.mp4';
+            const label = selectedFmt === 'mp3' ? 'Download MP3' : 'Download MP4';
+            dl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> ${label}`;
+            dl.style.display = 'flex';
+            dl.classList.add('pulse');
+            setTimeout(() => dl.classList.remove('pulse'), 7000);
+
+            $('btnCopyLink').style.display = 'flex';
+            if (navigator.share) $('btnShare').style.display = 'flex';
+            $('btnReset').style.display = 'block';
+            setConverting(false);
+          }, 400);
+
+        } else if (data.status === 'error') {
+          clearInterval(pollTimer); clearInterval(grow); clearInterval(msgCycle);
+          $('progressWrap').style.display = 'none';
+          $('statusText').style.display   = 'none';
+          showError(data.error || 'Download failed. Please try again.');
+          setConverting(false);
+        }
+      } catch {}
+    }, 2000);
+  }
+
+  async function copyDownloadLink() {
+    if (!currentDownloadUrl) return;
+    const full = location.origin + currentDownloadUrl;
+    try {
+      await navigator.clipboard.writeText(full);
+      $('btnCopyLink').textContent = '✓ Copied!';
+      $('btnCopyLink').classList.add('copied');
+      setTimeout(() => {
+        $('btnCopyLink').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy link`;
+        $('btnCopyLink').classList.remove('copied');
+      }, 2000);
+    } catch { prompt('Copy this link:', full); }
+  }
+
+  async function shareDownload() {
+    if (!navigator.share || !currentDownloadUrl) return;
+    try {
+      await navigator.share({ title: $('videoTitle').textContent || 'TikTok Video',
+        url: location.origin + currentDownloadUrl });
+    } catch {}
+  }
+
+  function resetForm() {
+    clearInterval(pollTimer);
+    $('urlInput').value = '';
+    updateClearBtn();
+    ['videoCard','btnDownload','btnCopyLink','btnShare','btnReset',
+     'errorWrap','progressWrap','statusText'].forEach(id => {
+      const el = $(id);
+      if (el) el.style.display = 'none';
+    });
+    currentDownloadUrl = null;
+    setConverting(false);
+    $('urlInput').focus();
+  }
+
+  $('urlInput').addEventListener('input',   updateClearBtn);
+  $('urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleConvert(); });
+  $('urlInput').addEventListener('focus',   async () => {
+    if ($('urlInput').value) return;
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && text.includes('tiktok.com')) {
+        $('urlInput').value = text;
+        updateClearBtn();
+      }
+    } catch {}
+  });
+</script>
+</body>
+</html>
