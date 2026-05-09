@@ -3,3 +3,4 @@ flask-cors
 yt-dlp
 gunicorn
 static-ffmpeg
+curl-cffi

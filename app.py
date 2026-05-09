@@ -133,17 +133,23 @@ def make_filename(title, ext='mp4'):
     name = re.sub(r'\s+', ' ', name)
     return (name[:80] or 'tiktok') + '.' + ext
 
+_IMPERSONATE = ['--impersonate', 'chrome-110']
+_TIKTOK_HEADERS = [
+    '--add-header', 'Referer:https://www.tiktok.com/',
+    '--add-header', 'Accept-Language:en-US,en;q=0.9',
+]
+
 def build_cmd(url, output_template, quality='hd', fmt='mp4'):
     if fmt == 'mp3':
         cmd = [YTDLP, '-x', '--audio-format', 'mp3', '--audio-quality', '320K',
-               '--no-playlist', '--newline']
+               '--no-playlist', '--newline'] + _IMPERSONATE + _TIKTOK_HEADERS
     else:
         if quality == 'sd':
             fmt_str = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
         else:
             fmt_str = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
         cmd = [YTDLP, '-f', fmt_str, '--merge-output-format', 'mp4',
-               '--no-playlist', '--newline']
+               '--no-playlist', '--newline'] + _IMPERSONATE + _TIKTOK_HEADERS
     ffmpeg_dir = _find_ffmpeg_dir()
     if ffmpeg_dir:
         cmd += ['--ffmpeg-location', ffmpeg_dir]
@@ -259,7 +265,7 @@ def get_info():
         return jsonify({'error': 'Invalid TikTok URL — please check the link.'}), 400
     try:
         result = subprocess.run(
-            [YTDLP, '--dump-json', '--no-playlist', url],
+            [YTDLP, '--dump-json', '--no-playlist'] + _IMPERSONATE + _TIKTOK_HEADERS + [url],
             capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return jsonify({'error': parse_ytdlp_error(result.stderr)}), 400
