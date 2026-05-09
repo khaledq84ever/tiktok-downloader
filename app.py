@@ -347,6 +347,18 @@ def download_file(job_id):
     return send_file(path, as_attachment=True, download_name=safe, mimetype=mime)
 
 
+@app.route('/debug-info', methods=['POST'])
+def debug_info():
+    data = request.get_json() or {}
+    url  = normalize_url(data.get('url', '').strip())
+    result = subprocess.run(
+        [YTDLP, '--dump-json', '--no-playlist'] + _IMPERSONATE + _TIKTOK_HEADERS + [url],
+        capture_output=True, text=True, timeout=30)
+    return jsonify({'returncode': result.returncode,
+                    'stdout': result.stdout[:500],
+                    'stderr': result.stderr[-1000:]})
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
