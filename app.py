@@ -569,7 +569,7 @@ def add_security_headers(resp):
     if resp.content_type and 'text/html' in resp.content_type:
         resp.headers['Content-Security-Policy'] = (
             "default-src 'self'; "
-            "script-src 'self' https://pagead2.googlesyndication.com; "
+            "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com; "
             "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
             "font-src https://fonts.gstatic.com; "
             "img-src 'self' data: https:; "
