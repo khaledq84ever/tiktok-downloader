@@ -569,12 +569,10 @@ def add_security_headers(resp):
     if resp.content_type and 'text/html' in resp.content_type:
         resp.headers['Content-Security-Policy'] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com; "
-            "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
-            "font-src https://fonts.gstatic.com; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: https:; "
             "connect-src 'self'; "
-            "frame-src https://pagead2.googlesyndication.com; "
         )
     return resp
 
@@ -625,11 +623,6 @@ def manifest():
 @app.route('/robots.txt')
 def robots():
     return 'User-agent: *\nAllow: /\n', 200, {'Content-Type': 'text/plain'}
-
-
-@app.route('/ads.txt')
-def ads_txt():
-    return 'google.com, pub-3956390078338144, DIRECT, f08c47fec0942fa0\n', 200, {'Content-Type': 'text/plain'}
 
 
 @app.route('/info', methods=['POST'])
