@@ -658,6 +658,51 @@
     $('urlInput').disabled = on;
   }
 
+  function showDirectResult(d) {
+    $('videoThumb').src         = d.thumbnail || '';
+    $('videoTitle').textContent = d.title || 'TikTok Video';
+    $('videoSub').textContent   = `@${d.uploader || 'tiktok'}  ·  ${d.duration || ''}`;
+    $('qualityBadge').textContent = 'Direct MP4';
+    $('videoCard').style.display = 'block';
+
+    currentDownloadUrl = d.download_url;
+    const dl = $('btnDownload');
+    dl.href = d.download_url;
+    dl.download = d.filename || 'tiktok.mp4';
+    dl.target = '_blank';
+    dl.rel = 'noopener';
+    dl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download MP4`;
+    dl.style.display = 'flex';
+    dl.classList.add('pulse');
+    setTimeout(() => dl.classList.remove('pulse'), 7000);
+
+    $('btnCopyLink').style.display = 'flex';
+    if (navigator.share) $('btnShare').style.display = 'flex';
+    $('btnReset').style.display = 'block';
+    setConverting(false);
+
+    const tmp = document.createElement('a');
+    tmp.href = d.download_url;
+    tmp.download = d.filename || 'tiktok.mp4';
+    tmp.target = '_blank';
+    tmp.rel = 'noopener';
+    document.body.appendChild(tmp);
+    tmp.click();
+    document.body.removeChild(tmp);
+  }
+
+  async function tryDirect(url) {
+    try {
+      const res = await fetch(BASE_PATH + '/direct', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      const data = await res.json();
+      if (res.ok && data.download_url) return data;
+    } catch {}
+    return null;
+  }
+
   async function handleConvert() {
     clearInterval(pollTimer);
     const url = $('urlInput').value.trim();
@@ -674,9 +719,20 @@
     currentDownloadUrl = null;
     setConverting(true);
 
+    $('statusText').textContent   = 'Getting direct link…';
+    $('statusText').style.display = 'block';
+
+    if (selectedFmt === 'mp4') {
+      const direct = await tryDirect(url);
+      if (direct) {
+        $('statusText').style.display = 'none';
+        showDirectResult(direct);
+        return;
+      }
+    }
+
     try {
-      $('statusText').textContent   = 'Fetching video info…';
-      $('statusText').style.display = 'block';
+      $('statusText').textContent = 'Fetching video info…';
 
       const infoRes = await fetch(BASE_PATH + '/info', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

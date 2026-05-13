@@ -95,6 +95,17 @@ YT_DLP_AVAILABLE = shutil.which('yt-dlp') is not None
 COOKIE_FILE = os.environ.get('TIKTOK_COOKIE_FILE', '')
 PROXY_URL = os.environ.get('PROXY_URL', '')
 
+_HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/124.0.0.0 Safari/537.36'
+    ),
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://snaptik.app/',
+}
+
 
 def _decode_snaptik(js):
     """Decode snaptik.app obfuscated JS response"""
@@ -124,6 +135,39 @@ def _decode_snaptik(js):
         if ns:
             result += chr(int(ns, e_base) - t_offset)
     return urllib.parse.unquote(result)
+
+
+def tikwm_info(url):
+    """Get TikTok info via tikwm.com API — returns IP-independent direct URLs
+    that can be fetched from the end user's browser.
+    """
+    try:
+        r = req_lib.post(
+            'https://www.tikwm.com/api/',
+            data={'url': url, 'hd': 1},
+            headers=_HEADERS, timeout=20
+        )
+        if r.status_code != 200:
+            return None, f'tikwm HTTP {r.status_code}'
+        body = r.json()
+        if body.get('code') != 0 or not body.get('data'):
+            return None, body.get('msg') or 'tikwm returned no data.'
+        d = body['data']
+        play = d.get('hdplay') or d.get('play') or d.get('wmplay')
+        if not play:
+            return None, 'tikwm returned no playable URL.'
+        if play.startswith('/'):
+            play = 'https://www.tikwm.com' + play
+        author = d.get('author') or {}
+        return {
+            'download_url': play,
+            'title':     d.get('title') or '',
+            'thumbnail': d.get('cover') or d.get('origin_cover') or '',
+            'author':    author.get('unique_id') or author.get('nickname') or '',
+            'duration':  d.get('duration') or 0,
+        }, None
+    except Exception as e:
+        return None, str(e)
 
 
 def snaptik_info(url):
@@ -585,6 +629,119 @@ def get_info():
         'duration_sec': duration_sec,
         'uploader': _extract_uploader(info, source),
         'url': url,
+    })
+
+
+@app.route('/direct', methods=['POST'])
+def get_direct():
+    """Fast path: paste TikTok URL → external service → return a direct download
+    URL the user's browser can fetch. Tries tikwm (IP-independent), snaptik, then
+    yt-dlp; the yt-dlp URL is signed and IP-bound, so we wrap it in a /stream
+    proxy URL so the user's browser can still download it through us.
+    """
+    if not _check_rate(_client_ip()):
+        return jsonify({'error': 'Too many requests. Please wait a moment.'}), 429
+    data = request.get_json() or {}
+    url = normalize_url(data.get('url', '').strip())
+    if not url or not is_valid_url(url):
+        return jsonify({'error': 'Invalid TikTok URL — please check the link.'}), 400
+
+    direct_url = None
+    title = ''
+    thumbnail = ''
+    uploader = ''
+    duration_sec = 0
+    source = None
+    last_err = None
+
+    info, err = tikwm_info(url)
+    if info:
+        direct_url = info['download_url']
+        title      = info.get('title') or ''
+        thumbnail  = info.get('thumbnail') or ''
+        uploader   = info.get('author') or ''
+        duration_sec = int(info.get('duration') or 0)
+        source = 'tikwm'
+    else:
+        last_err = err
+
+    if not direct_url:
+        info, err = snaptik_info(url)
+        if info:
+            direct_url = info['download_url']
+            source = 'snaptik'
+        else:
+            last_err = err or last_err
+
+    if not direct_url:
+        info, err = ytdlp_info(url)
+        if info:
+            inner = info.get('url') or ''
+            for f in info.get('formats', []) or []:
+                if f.get('vcodec') != 'none' and f.get('acodec') != 'none' and f.get('url'):
+                    inner = f['url']; break
+            if inner:
+                direct_url = (BASE_PATH + '/stream?u=' +
+                              urllib.parse.quote(inner, safe='') +
+                              '&n=' + urllib.parse.quote(make_filename(info.get('title') or 'tiktok', 'mp4'), safe=''))
+                title     = info.get('title') or ''
+                thumbnail = info.get('thumbnail') or ''
+                uploader  = info.get('uploader') or info.get('channel') or ''
+                duration_sec = int(info.get('duration') or 0)
+                source = 'ytdlp+proxy'
+        else:
+            last_err = err or last_err
+
+    if not direct_url:
+        return jsonify({'error': last_err or 'Could not extract video.'}), 502
+
+    m, s = divmod(duration_sec, 60)
+    duration_str = f'{m}:{s:02d}' if duration_sec else '—'
+    title = title or 'TikTok Video'
+    return jsonify({
+        'download_url': direct_url,
+        'title': title,
+        'thumbnail': thumbnail,
+        'uploader': uploader,
+        'duration': duration_str,
+        'duration_sec': duration_sec,
+        'filename': make_filename(title, 'mp4'),
+        'source': source,
+    })
+
+
+@app.route('/stream')
+def stream_proxy():
+    """Stream a (typically IP-bound) source URL through this server with the
+    right TikTok referer + Content-Disposition: attachment, so the user's
+    browser actually downloads it.
+    """
+    src = request.args.get('u', '')
+    name = request.args.get('n', 'tiktok.mp4')
+    if not src.startswith(('http://', 'https://')):
+        return jsonify({'error': 'Invalid source URL'}), 400
+    host = urllib.parse.urlparse(src).hostname or ''
+    if not any(host.endswith(h) for h in (
+        'tiktokcdn.com', 'tiktokcdn-us.com', 'tiktokcdn-eu.com',
+        'tiktokv.com', 'tiktok.com', 'byteoversea.com', 'muscdn.com',
+    )):
+        return jsonify({'error': 'Source host not allowed'}), 400
+
+    safe_name = re.sub(r'[^\w\s\-\.\(\)]', '', name).strip() or 'tiktok.mp4'
+
+    def _gen():
+        with req_lib.get(src, stream=True, timeout=120, headers={
+            **_HEADERS, 'Referer': 'https://www.tiktok.com/'
+        }) as r:
+            r.raise_for_status()
+            for chunk in r.iter_content(chunk_size=65536):
+                if chunk:
+                    yield chunk
+
+    from flask import Response
+    return Response(_gen(), mimetype='video/mp4', headers={
+        'Content-Disposition': f'attachment; filename="{safe_name}"',
+        'Cache-Control': 'no-store',
     })
 
 
