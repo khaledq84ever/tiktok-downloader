@@ -658,37 +658,67 @@
     $('urlInput').disabled = on;
   }
 
+  function _safeName(title, ext) {
+    const safe = (title || 'tiktok').replace(/[\\/:*?"<>|]+/g, ' ')
+      .replace(/\s+/g, ' ').trim().slice(0, 80);
+    return safe + '.' + (ext || 'mp4');
+  }
+
+  function _dlIcon() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>';
+  }
+
   function showDirectResult(d) {
     $('videoThumb').src         = d.thumbnail || '';
     $('videoTitle').textContent = d.title || 'TikTok Video';
     $('videoSub').textContent   = `@${d.uploader || 'tiktok'}  ·  ${d.duration || ''}`;
-    $('qualityBadge').textContent = 'Direct MP4';
+    $('qualityBadge').textContent = 'Multiple formats';
     $('videoCard').style.display = 'block';
 
-    currentDownloadUrl = d.download_url;
-    const dl = $('btnDownload');
-    dl.href = d.download_url;
-    dl.download = d.filename || 'tiktok.mp4';
-    dl.target = '_blank';
-    dl.rel = 'noopener';
-    dl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download MP4`;
-    dl.style.display = 'flex';
-    dl.classList.add('pulse');
-    setTimeout(() => dl.classList.remove('pulse'), 7000);
+    $('btnDownload').style.display = 'none';
+    let actions = $('directActions');
+    if (!actions) {
+      actions = document.createElement('div');
+      actions.id = 'directActions';
+      actions.style.cssText = 'display:flex;flex-direction:column;gap:8px;padding:0 12px 4px;';
+      $('btnDownload').parentNode.insertBefore(actions, $('btnDownload'));
+    }
+    actions.innerHTML = '';
+
+    const list = (d.downloads && d.downloads.length) ? d.downloads
+      : [{label: 'Download MP4', url: d.download_url, kind: 'video', ext: 'mp4'}];
+
+    list.forEach((dl, idx) => {
+      const a = document.createElement('a');
+      const isAudio = dl.kind === 'audio';
+      const isWM    = /watermark\)/i.test(dl.label) && !/no/i.test(dl.label);
+      a.href = dl.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.download = _safeName(d.title, dl.ext || 'mp4');
+      a.style.cssText = [
+        'display:flex','align-items:center','justify-content:center','gap:10px',
+        'padding:13px 14px','min-height:50px',
+        'font-family:inherit','font-size:clamp(0.92rem,2.5vw,1.02rem)','font-weight:800',
+        'text-decoration:none','border-radius:12px',
+        isAudio
+          ? 'background:linear-gradient(135deg,#25f4ee,#0fb5b0);color:#04282a;box-shadow:0 4px 18px rgba(37,244,238,0.32)'
+          : isWM
+          ? 'background:var(--surface2);color:var(--text);border:1.5px solid var(--border2)'
+          : 'background:linear-gradient(135deg,var(--success),#059669);color:#fff;box-shadow:0 4px 18px rgba(16,185,129,0.28)',
+      ].join(';');
+      a.innerHTML = `<span style="width:18px;height:18px;display:inline-flex;flex-shrink:0">${_dlIcon()}</span><span>${dl.label}</span>`;
+      actions.appendChild(a);
+      if (idx === 0) {
+        currentDownloadUrl = dl.url;
+        setTimeout(() => a.click(), 100);
+      }
+    });
 
     $('btnCopyLink').style.display = 'flex';
     if (navigator.share) $('btnShare').style.display = 'flex';
     $('btnReset').style.display = 'block';
     setConverting(false);
-
-    const tmp = document.createElement('a');
-    tmp.href = d.download_url;
-    tmp.download = d.filename || 'tiktok.mp4';
-    tmp.target = '_blank';
-    tmp.rel = 'noopener';
-    document.body.appendChild(tmp);
-    tmp.click();
-    document.body.removeChild(tmp);
   }
 
   async function tryDirect(url) {
@@ -716,6 +746,8 @@
     $('btnReset').style.display     = 'none';
     $('progressWrap').style.display = 'none';
     $('statusText').style.display   = 'none';
+    const _actions = $('directActions');
+    if (_actions) _actions.innerHTML = '';
     currentDownloadUrl = null;
     setConverting(true);
 
@@ -879,6 +911,8 @@
       const el = $(id);
       if (el) el.style.display = 'none';
     });
+    const actions = $('directActions');
+    if (actions) actions.innerHTML = '';
     currentDownloadUrl = null;
     setConverting(false);
     $('urlInput').focus();

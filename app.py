@@ -139,13 +139,16 @@ def _decode_snaptik(js):
 
 def tikwm_info(url):
     """Get TikTok info via tikwm.com API — returns IP-independent direct URLs
-    that can be fetched from the end user's browser.
+    that can be fetched from the end user's browser. Returns all variants:
+    HD MP4 (no-WM), MP4 (no-WM), MP4 (with-WM), MP3.
+    Matches the pattern from the YouTube downloader's /tiktok/resolve.
     """
     try:
         r = req_lib.post(
             'https://www.tikwm.com/api/',
             data={'url': url, 'hd': 1},
-            headers=_HEADERS, timeout=20
+            headers={**_HEADERS, 'Referer': 'https://www.tikwm.com/'},
+            timeout=20,
         )
         if r.status_code != 200:
             return None, f'tikwm HTTP {r.status_code}'
@@ -153,18 +156,35 @@ def tikwm_info(url):
         if body.get('code') != 0 or not body.get('data'):
             return None, body.get('msg') or 'tikwm returned no data.'
         d = body['data']
-        play = d.get('hdplay') or d.get('play') or d.get('wmplay')
-        if not play:
+
+        def _abs(u):
+            if not u: return ''
+            if u.startswith('http'): return u
+            return 'https://www.tikwm.com' + u
+
+        downloads = []
+        if d.get('hdplay'):
+            downloads.append({'label': 'HD MP4 (no watermark)', 'url': _abs(d['hdplay']), 'kind': 'video', 'ext': 'mp4'})
+        if d.get('play'):
+            downloads.append({'label': 'MP4 (no watermark)',    'url': _abs(d['play']),   'kind': 'video', 'ext': 'mp4'})
+        if d.get('wmplay'):
+            downloads.append({'label': 'MP4 (with watermark)',  'url': _abs(d['wmplay']), 'kind': 'video', 'ext': 'mp4'})
+        if d.get('music'):
+            downloads.append({'label': 'MP3 (audio only)',      'url': _abs(d['music']),  'kind': 'audio', 'ext': 'mp3'})
+        if not downloads:
             return None, 'tikwm returned no playable URL.'
-        if play.startswith('/'):
-            play = 'https://www.tikwm.com' + play
+
         author = d.get('author') or {}
+        if isinstance(author, dict):
+            author = author.get('nickname') or author.get('unique_id') or ''
+
         return {
-            'download_url': play,
-            'title':     d.get('title') or '',
-            'thumbnail': d.get('cover') or d.get('origin_cover') or '',
-            'author':    author.get('unique_id') or author.get('nickname') or '',
-            'duration':  d.get('duration') or 0,
+            'download_url': downloads[0]['url'],
+            'downloads':    downloads,
+            'title':        d.get('title') or '',
+            'thumbnail':    _abs(d.get('cover') or d.get('origin_cover') or ''),
+            'author':       author or '',
+            'duration':     int(d.get('duration') or 0),
         }, None
     except Exception as e:
         return None, str(e)
@@ -581,7 +601,11 @@ def health():
 
 @app.route('/')
 def index():
-    return render_template('index.html', base_path=BASE_PATH)
+    resp = app.make_response(render_template('index.html', base_path=BASE_PATH))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma']        = 'no-cache'
+    resp.headers['Expires']       = '0'
+    return resp
 
 
 @app.route('/manifest.json')
@@ -647,6 +671,7 @@ def get_direct():
         return jsonify({'error': 'Invalid TikTok URL — please check the link.'}), 400
 
     direct_url = None
+    downloads = []
     title = ''
     thumbnail = ''
     uploader = ''
@@ -657,6 +682,7 @@ def get_direct():
     info, err = tikwm_info(url)
     if info:
         direct_url = info['download_url']
+        downloads  = info.get('downloads') or []
         title      = info.get('title') or ''
         thumbnail  = info.get('thumbnail') or ''
         uploader   = info.get('author') or ''
@@ -698,15 +724,23 @@ def get_direct():
     m, s = divmod(duration_sec, 60)
     duration_str = f'{m}:{s:02d}' if duration_sec else '—'
     title = title or 'TikTok Video'
+    if not downloads:
+        downloads = [{
+            'label': 'Download MP4',
+            'url':   direct_url,
+            'kind':  'video',
+            'ext':   'mp4',
+        }]
     return jsonify({
         'download_url': direct_url,
-        'title': title,
-        'thumbnail': thumbnail,
-        'uploader': uploader,
-        'duration': duration_str,
+        'downloads':    downloads,
+        'title':        title,
+        'thumbnail':    thumbnail,
+        'uploader':     uploader,
+        'duration':     duration_str,
         'duration_sec': duration_sec,
-        'filename': make_filename(title, 'mp4'),
-        'source': source,
+        'filename':     make_filename(title, 'mp4'),
+        'source':       source,
     })
 
 
