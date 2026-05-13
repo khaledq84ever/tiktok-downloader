@@ -1,5 +1,5 @@
-flask
-flask-cors
-requests
-gunicorn
-static-ffmpeg
+flask>=3.0
+flask-cors>=4.0
+requests>=2.31
+gunicorn>=21.2
+static-ffmpeg>=0.2

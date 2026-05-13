@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3956390078338144" crossorigin="anonymous"></script>
   <title>TikSave — TikTok Video Downloader</title>
   <meta name="description" content="Download TikTok videos without watermark. Free, fast, no signup required." />
   <meta property="og:title" content="TikSave — TikTok Video Downloader" />
@@ -596,6 +597,7 @@
 </footer>
 
 <script>
+  const BASE_PATH = '{{ base_path }}';
   let pollTimer = null;
   let currentDownloadUrl = null;
   let selectedFmt = localStorage.getItem('tt_fmt') || 'mp4';
@@ -676,7 +678,7 @@
       $('statusText').textContent   = 'Fetching video info…';
       $('statusText').style.display = 'block';
 
-      const infoRes = await fetch('/info', {
+      const infoRes = await fetch(BASE_PATH + '/info', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
       });
@@ -694,7 +696,7 @@
 
       $('videoCard').style.display = 'block';
 
-      const startRes = await fetch('/start', {
+      const startRes = await fetch(BASE_PATH + '/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: info.url || url, title: info.title,
           format: selectedFmt, quality: selectedQ })
@@ -738,7 +740,7 @@
         return;
       }
       try {
-        const res  = await fetch(`/status/${jobId}`);
+        const res  = await fetch(BASE_PATH + `/status/${jobId}`);
         const data = await res.json();
 
         if (data.progress != null && data.progress > fake) {
@@ -758,7 +760,7 @@
             $('progressWrap').style.display = 'none';
             $('statusText').style.display   = 'none';
 
-            const dlUrl = `/download/${jobId}`;
+            const dlUrl = BASE_PATH + `/download/${jobId}`;
             currentDownloadUrl = dlUrl;
 
             const tmp = document.createElement('a');

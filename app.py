@@ -1,8 +1,22 @@
+import atexit
+import logging
+import os
+import re
+import glob
+import json
+import threading
+import time
+import shutil
+import subprocess
+import uuid
+import signal
+import urllib.parse
+from collections import defaultdict
+from datetime import datetime, timezone
+
+import requests as req_lib
 from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
-import os, uuid, re, glob, json, threading, time, shutil, subprocess
-import requests as req_lib
-from collections import defaultdict
 
 try:
     import static_ffmpeg
@@ -10,12 +24,22 @@ try:
 except Exception:
     pass
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
+log = logging.getLogger(__name__)
+
 app = Flask(__name__)
 CORS(app)
 
+BASE_PATH    = os.environ.get('BASE_PATH', '')
 DOWNLOAD_DIR = '/tmp/tiktok_cache'
 FILE_TTL     = 1800
 RATE_LIMIT   = 10
+CLEANUP_INTERVAL = 300
+RATE_CLEANUP_INTERVAL = 120
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -23,17 +47,20 @@ jobs          = {}
 jobs_lock     = threading.Lock()
 _rate_store   = defaultdict(list)
 _rate_lock    = threading.Lock()
+_shutdown     = threading.Event()
 
 
 def _job_path(job_id):
     return os.path.join(DOWNLOAD_DIR, f'job_{job_id}.json')
 
+
 def _save_job(job_id, job):
     try:
         with open(_job_path(job_id), 'w') as f:
             json.dump(job, f)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning('Failed to save job %s: %s', job_id, e)
+
 
 def _load_job_from_disk(job_id):
     try:
@@ -41,6 +68,7 @@ def _load_job_from_disk(job_id):
             return json.load(f)
     except Exception:
         return None
+
 
 def _load_all_jobs():
     for p in glob.glob(os.path.join(DOWNLOAD_DIR, 'job_*.json')):
@@ -50,33 +78,189 @@ def _load_all_jobs():
             job_id = os.path.basename(p)[4:-5]
             if job.get('status') in ('pending', 'processing'):
                 job['status'] = 'error'
-                job['error']  = 'Server restarted. Please try again.'
+                job['error'] = 'Server restarted. Please try again.'
                 _save_job(job_id, job)
             if job.get('status') == 'done' and not os.path.exists(job.get('file', '')):
                 os.remove(p)
                 continue
             jobs[job_id] = job
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning('Failed to load job file %s: %s', p, e)
+
 
 _load_all_jobs()
 
 
-# ── tikwm API ────────────────────────────────────────────────────────────────
+YT_DLP_AVAILABLE = shutil.which('yt-dlp') is not None
+COOKIE_FILE = os.environ.get('TIKTOK_COOKIE_FILE', '')
+PROXY_URL = os.environ.get('PROXY_URL', '')
 
-TIKWM = 'https://www.tikwm.com/api/'
-_HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-def tikwm_info(url):
+def _decode_snaptik(js):
+    """Decode snaptik.app obfuscated JS response"""
+    idx = js.find('eval(')
+    if idx < 0:
+        return None
+    depth = 0
+    end_idx = idx
+    for i, c in enumerate(js[idx:]):
+        if c == '(': depth += 1
+        elif c == ')':
+            depth -= 1
+            if depth == 0:
+                end_idx = idx + i + 1
+                break
+    eval_content = js[idx:end_idx]
+    m = re.search(r'"([^"]+)"\s*,(\d+)\s*,"([^"]+)"\s*,(\d+)\s*,(\d+)\s*,(\d+)\s*\)\)$', eval_content)
+    if not m:
+        return None
+    encoded, n_charset, t_offset = m.group(1), m.group(3), int(m.group(4))
+    e_base, sep_idx = int(m.group(5)), int(m.group(6))
+    sep_char = n_charset[sep_idx]
+    result = ''
+    for part in encoded.split(sep_char):
+        if not part: continue
+        ns = ''.join(str(n_charset.find(c)) for c in part if n_charset.find(c) >= 0)
+        if ns:
+            result += chr(int(ns, e_base) - t_offset)
+    return urllib.parse.unquote(result)
+
+
+def snaptik_info(url):
+    """Get TikTok info via snaptik.app API"""
     try:
-        r = req_lib.get(TIKWM, params={'url': url, 'hd': 1},
-                        headers=_HEADERS, timeout=15)
-        data = r.json()
-        if data.get('code') == 0:
-            return data.get('data'), None
-        return None, data.get('msg', 'Video not found or unavailable.')
+        r = req_lib.get('https://snaptik.app/en2', headers=_HEADERS, timeout=15)
+        token_m = re.search(r'name="token"\s*value="([^"]+)"', r.text)
+        token = token_m.group(1) if token_m else ''
+        r = req_lib.post('https://snaptik.app/abc2.php', data={
+            'url': url, 'lang': 'en2', 'token': token,
+        }, headers=_HEADERS, timeout=20)
+        decoded = _decode_snaptik(r.text)
+        if not decoded:
+            return None, 'Could not decode snaptik response.'
+        if 'showAlert' in decoded:
+            err_m = re.search(r'showAlert\("([^"]+)"', decoded)
+            return None, err_m.group(1) if err_m else 'TikTok server unavailable.'
+        urls = re.findall(r'https?://[^\s"\'<>,;)\]]+\.(?:mp4|jpg|png)', decoded)
+        if urls:
+            return {'download_url': urls[0], 'source': 'snaptik'}, None
+        return None, 'No download URL found.'
     except Exception as e:
-        return None, f'Could not reach download service. Please try again.'
+        return None, str(e)
+
+
+def ytdlp_info(url):
+    if not YT_DLP_AVAILABLE:
+        return None, 'yt-dlp not available.'
+    cmd = ['yt-dlp', '--dump-json', '--no-warnings', url]
+    if COOKIE_FILE and os.path.exists(COOKIE_FILE):
+        cmd += ['--cookies', COOKIE_FILE]
+    if PROXY_URL:
+        cmd += ['--proxy', PROXY_URL]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout), None
+        return None, result.stderr.strip() or 'yt-dlp failed.'
+    except subprocess.TimeoutExpired:
+        return None, 'yt-dlp timed out.'
+    except Exception as e:
+        return None, str(e)
+
+
+def fetch_video_info(url):
+    data, err = ytdlp_info(url)
+    if data:
+        return data, 'ytdlp', None
+
+    data2, err2 = snaptik_info(url)
+    if data2:
+        return data2, 'snaptik', None
+
+    return None, None, err or err2 or 'All download sources failed.'
+
+
+def get_download_urls(data, source, fmt, quality):
+    if source == 'tikwm':
+        if fmt == 'mp3':
+            return data.get('music') or data.get('play'), None
+        elif quality == 'sd':
+            return data.get('play') or data.get('hdplay'), None
+        else:
+            return data.get('hdplay') or data.get('play'), None
+
+    elif source == 'snaptik':
+        if fmt == 'mp3':
+            return data.get('music', {}).get('url') or data.get('audio'), None
+        video = data.get('video') or data.get('play') or data.get('download')
+        if isinstance(video, dict):
+            if quality == 'hd' and video.get('hd'):
+                return video['hd'], None
+            return video.get('sd') or video.get('url'), None
+        return video, None
+
+    elif source == 'ytdlp':
+        if fmt == 'mp3':
+            return None, 'audio'
+        formats = data.get('formats', [])
+        best = None
+        for f in formats:
+            if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                if quality == 'hd' or not best:
+                    best = f
+                elif f.get('height', 0) < best.get('height', 0):
+                    best = f
+        return best.get('url') if best else data.get('url'), None
+
+    return None, None
+
+
+def _extract_title(data, source):
+    if source == 'tikwm':
+        return data.get('title', '') or data.get('desc', '') or 'TikTok Video'
+    elif source == 'snaptik':
+        return data.get('title', '') or data.get('desc', '') or 'TikTok Video'
+    elif source == 'ytdlp':
+        return data.get('title', '') or 'TikTok Video'
+    return 'TikTok Video'
+
+
+def _extract_thumbnail(data, source):
+    if source == 'tikwm':
+        return data.get('cover', '') or data.get('origin_cover', '')
+    elif source == 'snaptik':
+        return data.get('cover', '') or data.get('thumbnail', '')
+    elif source == 'ytdlp':
+        return data.get('thumbnail', '')
+    return ''
+
+
+def _extract_uploader(data, source):
+    if source == 'tikwm':
+        author = data.get('author')
+        if isinstance(author, dict):
+            return author.get('nickname', '')
+        return ''
+    elif source == 'snaptik':
+        author = data.get('author', '')
+        if isinstance(author, dict):
+            return author.get('nickname', '') or author.get('name', '')
+        return str(author) if author else ''
+    elif source == 'ytdlp':
+        return data.get('uploader', '') or data.get('channel', '')
+    return ''
+
+
+def _extract_duration(data, source):
+    duration = 0
+    if source == 'tikwm':
+        duration = data.get('duration', 0) or 0
+    elif source == 'snaptik':
+        duration = data.get('duration', 0) or 0
+    elif source == 'ytdlp':
+        duration = data.get('duration', 0) or 0
+    m, s = divmod(int(duration), 60)
+    return f'{m}:{s:02d}' if duration else '—', int(duration)
 
 
 def download_stream(video_url, output_path, job_id):
@@ -85,7 +269,7 @@ def download_stream(video_url, output_path, job_id):
     })
     r.raise_for_status()
     total = int(r.headers.get('content-length', 0))
-    done  = 0
+    done = 0
     with open(output_path, 'wb') as f:
         for chunk in r.iter_content(chunk_size=65536):
             if chunk:
@@ -98,8 +282,6 @@ def download_stream(video_url, output_path, job_id):
                             jobs[job_id]['progress'] = pct
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _find_ffmpeg():
     p = shutil.which('ffmpeg')
     if p:
@@ -111,36 +293,48 @@ def _find_ffmpeg():
     nix = glob.glob('/nix/store/*/bin/ffmpeg')
     return nix[0] if nix else None
 
+
 def make_filename(title, ext='mp4'):
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', title or 'tiktok').strip()
     name = re.sub(r'\s+', ' ', name)
     return (name[:80] or 'tiktok') + '.' + ext
+
 
 def _set_job(job_id, updates):
     with jobs_lock:
         jobs[job_id].update(updates)
         _save_job(job_id, jobs[job_id])
 
+
 def schedule_cleanup(job_id, path):
     def _cleanup():
-        time.sleep(FILE_TTL)
+        if _shutdown.wait(FILE_TTL):
+            return
         try:
-            if os.path.isfile(path):  os.remove(path)
-            elif os.path.isdir(path): shutil.rmtree(path, ignore_errors=True)
+            if os.path.isfile(path):
+                os.remove(path)
+            elif os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
         except Exception:
             pass
         with jobs_lock:
             jobs.pop(job_id, None)
     threading.Thread(target=_cleanup, daemon=True).start()
 
+
 def is_valid_url(url):
-    return bool(re.search(r'(?:https?://)?(?:www\.|vm\.|vt\.|m\.)?tiktok\.com', url, re.I))
+    return bool(re.search(
+        r'(?:https?://)?(?:www\.|vm\.|vt\.|m\.)?tiktok\.com',
+        url, re.I
+    ))
+
 
 def normalize_url(url):
-    url = url.strip()
+    url = url.strip().split('?')[0]
     if not url.startswith('http'):
         url = 'https://' + url
     return url
+
 
 def _check_rate(ip):
     now = time.time()
@@ -151,78 +345,235 @@ def _check_rate(ip):
         _rate_store[ip].append(now)
         return True
 
+
 def _client_ip():
     return (request.headers.get('X-Forwarded-For', '')
             .split(',')[0].strip() or request.remote_addr or 'unknown')
 
 
-# ── Worker ────────────────────────────────────────────────────────────────────
-
 def do_download(job_id, url, title, fmt, quality):
     _set_job(job_id, {'status': 'processing', 'progress': 5})
     try:
-        data, err = tikwm_info(url)
+        data, source, err = fetch_video_info(url)
         if err or not data:
             _set_job(job_id, {'status': 'error', 'error': err or 'Could not fetch video.'})
             return
 
-        # Pick the right source URL
-        if fmt == 'mp3':
-            src_url = data.get('music') or data.get('play')
-        elif quality == 'sd':
-            src_url = data.get('play') or data.get('hdplay')
-        else:
-            src_url = data.get('hdplay') or data.get('play')
+        _set_job(job_id, {'progress': 15})
+
+        src_url, audio_only = get_download_urls(data, source, fmt, quality)
+
+        if source == 'ytdlp' and audio_only:
+            file_id = str(uuid.uuid4())
+            mp3_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.mp3')
+            try:
+                subprocess.run(
+                    ['yt-dlp', '-x', '--audio-format', 'mp3',
+                     '-o', mp3_path, url, '--no-warnings'],
+                    capture_output=True, timeout=180
+                )
+                actual = mp3_path
+                if not os.path.exists(actual):
+                    actual = mp3_path + '.mp3'
+                if not os.path.exists(actual):
+                    _set_job(job_id, {'status': 'error', 'error': 'Audio extraction failed.'})
+                    return
+                filename = make_filename(title or _extract_title(data, source) or 'tiktok', 'mp3')
+                _set_job(job_id, {'status': 'done', 'file': actual,
+                                   'filename': filename, 'progress': 100})
+                schedule_cleanup(job_id, actual)
+                return
+            except Exception as e:
+                _set_job(job_id, {'status': 'error', 'error': 'Audio download failed.'})
+                return
 
         if not src_url:
             _set_job(job_id, {'status': 'error', 'error': 'No download URL found.'})
             return
 
-        file_id  = str(uuid.uuid4())
-        tmp_ext  = 'mp3' if fmt == 'mp3' and src_url.endswith('.mp3') else 'mp4'
-        tmp_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.{tmp_ext}')
+        file_id = str(uuid.uuid4())
+        out_ext = 'mp3' if fmt == 'mp3' else 'mp4'
+        tmp_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.{out_ext}')
+
+        if source == 'ytdlp':
+            yt_path = os.path.join(DOWNLOAD_DIR, f'{file_id}_yt.%(ext)s')
+            try:
+                subprocess.run(
+                    ['yt-dlp', '-f', 'best', '-o', yt_path,
+                     url, '--no-warnings'],
+                    capture_output=True, timeout=180
+                )
+                expected = os.path.join(DOWNLOAD_DIR, f'{file_id}_yt.{out_ext}')
+                if not os.path.exists(expected):
+                    for f_glob in glob.glob(os.path.join(DOWNLOAD_DIR, f'{file_id}_yt.*')):
+                        expected = f_glob
+                        break
+                if not os.path.exists(expected):
+                    _set_job(job_id, {'status': 'error', 'error': 'Download via yt-dlp failed.'})
+                    return
+                _set_job(job_id, {'progress': 90})
+                if fmt == 'mp3' and out_ext == 'mp4':
+                    mp3_path = os.path.join(DOWNLOAD_DIR, f'{file_id}_audio.mp3')
+                    ffmpeg = _find_ffmpeg()
+                    if ffmpeg:
+                        subprocess.run(
+                            [ffmpeg, '-i', expected, '-q:a', '0',
+                             '-map', 'a', mp3_path, '-y'],
+                            capture_output=True, timeout=120
+                        )
+                        os.remove(expected)
+                        out_path = mp3_path
+                    else:
+                        out_path = expected
+                else:
+                    out_path = expected
+                filename = make_filename(title or _extract_title(data, source) or 'tiktok', out_ext)
+                _set_job(job_id, {'status': 'done', 'file': out_path,
+                                   'filename': filename, 'progress': 100})
+                schedule_cleanup(job_id, out_path)
+                return
+            except Exception as e:
+                _set_job(job_id, {'status': 'error', 'error': 'yt-dlp download failed.'})
+                return
 
         download_stream(src_url, tmp_path, job_id)
         _set_job(job_id, {'progress': 92})
 
-        # If MP3 requested but we got an MP4, extract audio with ffmpeg
-        if fmt == 'mp3' and tmp_ext == 'mp4':
+        if fmt == 'mp3' and out_ext == 'mp4':
             mp3_path = os.path.join(DOWNLOAD_DIR, f'{file_id}_audio.mp3')
-            ffmpeg   = _find_ffmpeg()
+            ffmpeg = _find_ffmpeg()
             if ffmpeg:
-                subprocess.run([ffmpeg, '-i', tmp_path, '-q:a', '0',
-                                '-map', 'a', mp3_path, '-y'],
-                               capture_output=True, timeout=120)
+                subprocess.run(
+                    [ffmpeg, '-i', tmp_path, '-q:a', '0',
+                     '-map', 'a', mp3_path, '-y'],
+                    capture_output=True, timeout=120
+                )
                 os.remove(tmp_path)
                 tmp_path = mp3_path
             else:
-                tmp_path = tmp_path  # serve mp4 as fallback
+                log.warning('ffmpeg not found, serving mp4 as fallback for mp3 request')
 
-        out_ext  = 'mp3' if fmt == 'mp3' else 'mp4'
-        filename = make_filename(title or data.get('title', 'tiktok'), out_ext)
+        filename = make_filename(title or _extract_title(data, source) or 'tiktok', out_ext)
         _set_job(job_id, {'status': 'done', 'file': tmp_path,
                            'filename': filename, 'progress': 100})
         schedule_cleanup(job_id, tmp_path)
 
     except Exception as e:
+        log.error('Download failed for job %s: %s', job_id, e)
         _set_job(job_id, {'status': 'error', 'error': 'Download failed. Please try again.'})
 
 
-# ── Security headers ──────────────────────────────────────────────────────────
+def _cleanup_loop():
+    while not _shutdown.is_set():
+        _shutdown.wait(CLEANUP_INTERVAL)
+        if _shutdown.is_set():
+            break
+        now = time.time()
+        removed = 0
+        with jobs_lock:
+            stale = []
+            for job_id, job in list(jobs.items()):
+                if job.get('status') == 'done' and job.get('file'):
+                    try:
+                        mtime = os.path.getmtime(job['file'])
+                        if now - mtime > FILE_TTL:
+                            try:
+                                if os.path.isfile(job['file']):
+                                    os.remove(job['file'])
+                            except Exception:
+                                pass
+                            stale.append(job_id)
+                    except OSError:
+                        stale.append(job_id)
+                elif job.get('status') == 'error':
+                    age = job.get('_created', now)
+                    if now - age > 3600:
+                        stale.append(job_id)
+            for jid in stale:
+                jobs.pop(jid, None)
+                jp = _job_path(jid)
+                try:
+                    if os.path.exists(jp):
+                        os.remove(jp)
+                except Exception:
+                    pass
+                removed += 1
+        if removed:
+            log.info('Cleanup: removed %d stale jobs', removed)
+
+
+def _rate_cleanup_loop():
+    while not _shutdown.is_set():
+        _shutdown.wait(RATE_CLEANUP_INTERVAL)
+        if _shutdown.is_set():
+            break
+        now = time.time()
+        with _rate_lock:
+            for ip in list(_rate_store.keys()):
+                _rate_store[ip] = [t for t in _rate_store[ip] if now - t < 60]
+                if not _rate_store[ip]:
+                    del _rate_store[ip]
+
+
+def _signal_handler(signum, frame):
+    log.info('Received signal %d, shutting down...', signum)
+    _shutdown.set()
+
+
+signal.signal(signal.SIGTERM, _signal_handler)
+signal.signal(signal.SIGINT, _signal_handler)
+
+atexit.register(lambda: _shutdown.set())
+
+cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True, name='job-cleanup')
+cleanup_thread.start()
+rate_cleanup_thread = threading.Thread(target=_rate_cleanup_loop, daemon=True, name='rate-cleanup')
+rate_cleanup_thread.start()
+
 
 @app.after_request
 def add_security_headers(resp):
-    resp.headers['X-Frame-Options']        = 'SAMEORIGIN'
+    resp.headers['X-Frame-Options'] = 'SAMEORIGIN'
     resp.headers['X-Content-Type-Options'] = 'nosniff'
-    resp.headers['Referrer-Policy']        = 'strict-origin-when-cross-origin'
+    resp.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    resp.headers['X-XSS-Protection'] = '0'
+    if resp.content_type and 'text/html' in resp.content_type:
+        resp.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            "script-src 'self' https://pagead2.googlesyndication.com; "
+            "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
+            "font-src https://fonts.gstatic.com; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self'; "
+            "frame-src https://pagead2.googlesyndication.com; "
+        )
     return resp
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+@app.route('/health')
+def health():
+    deps = {
+        'ffmpeg': _find_ffmpeg() is not None,
+        'yt-dlp': YT_DLP_AVAILABLE,
+        'tikwm_api': True,
+        'download_dir': os.path.isdir(DOWNLOAD_DIR),
+    }
+    all_ok = all(deps.values())
+    status_code = 200 if all_ok else 503
+    return jsonify({
+        'status': 'ok' if all_ok else 'degraded',
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'uptime': time.time() - _start_time,
+        'active_jobs': len(jobs),
+        'dependencies': deps,
+        'version': '2.0',
+    }), status_code
+
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', base_path=BASE_PATH)
+
 
 @app.route('/manifest.json')
 def manifest():
@@ -230,49 +581,56 @@ def manifest():
         "name": "TikTok Downloader",
         "short_name": "TikSave",
         "description": "Download TikTok videos without watermark",
-        "start_url": "/",
+        "start_url": BASE_PATH + "/",
         "display": "standalone",
         "background_color": "#010101",
         "theme_color": "#fe2c55",
         "icons": []
     })
 
+
 @app.route('/robots.txt')
 def robots():
     return 'User-agent: *\nAllow: /\n', 200, {'Content-Type': 'text/plain'}
+
+
+@app.route('/ads.txt')
+def ads_txt():
+    return 'google.com, pub-3956390078338144, DIRECT, f08c47fec0942fa0\n', 200, {'Content-Type': 'text/plain'}
+
 
 @app.route('/info', methods=['POST'])
 def get_info():
     if not _check_rate(_client_ip()):
         return jsonify({'error': 'Too many requests. Please wait a moment.'}), 429
     data = request.get_json() or {}
-    url  = normalize_url(data.get('url', '').strip())
+    url = normalize_url(data.get('url', '').strip())
     if not url or not is_valid_url(url):
         return jsonify({'error': 'Invalid TikTok URL — please check the link.'}), 400
 
-    info, err = tikwm_info(url)
+    info, source, err = fetch_video_info(url)
     if err or not info:
         return jsonify({'error': err or 'Could not fetch video info.'}), 400
 
-    duration = info.get('duration', 0) or 0
-    m, s     = divmod(int(duration), 60)
+    duration_str, duration_sec = _extract_duration(info, source)
     return jsonify({
-        'title':        info.get('title', '') or 'TikTok Video',
-        'thumbnail':    info.get('cover', '') or info.get('origin_cover', ''),
-        'duration':     f'{m}:{s:02d}' if duration else '—',
-        'duration_sec': int(duration),
-        'uploader':     info.get('author', {}).get('nickname', '') if isinstance(info.get('author'), dict) else '',
-        'url':          url,
+        'title': _extract_title(info, source),
+        'thumbnail': _extract_thumbnail(info, source),
+        'duration': duration_str,
+        'duration_sec': duration_sec,
+        'uploader': _extract_uploader(info, source),
+        'url': url,
     })
+
 
 @app.route('/start', methods=['POST'])
 def start_convert():
     if not _check_rate(_client_ip()):
         return jsonify({'error': 'Too many requests. Please wait a moment.'}), 429
-    data    = request.get_json() or {}
-    url     = normalize_url(data.get('url', '').strip())
-    title   = data.get('title', '').strip()
-    fmt     = data.get('format', 'mp4')
+    data = request.get_json() or {}
+    url = normalize_url(data.get('url', '').strip())
+    title = data.get('title', '').strip()
+    fmt = data.get('format', 'mp4')
     quality = data.get('quality', 'hd')
     if fmt not in ('mp4', 'mp3'):
         fmt = 'mp4'
@@ -283,8 +641,10 @@ def start_convert():
 
     job_id = str(uuid.uuid4())
     with jobs_lock:
-        jobs[job_id] = {'status': 'pending', 'file': None, 'filename': None,
-                         'error': None, 'progress': 0}
+        jobs[job_id] = {
+            'status': 'pending', 'file': None, 'filename': None,
+            'error': None, 'progress': 0, '_created': time.time(),
+        }
 
     threading.Thread(
         target=do_download,
@@ -292,6 +652,7 @@ def start_convert():
         daemon=True
     ).start()
     return jsonify({'job_id': job_id})
+
 
 @app.route('/status/<job_id>')
 def get_status(job_id):
@@ -305,6 +666,7 @@ def get_status(job_id):
     if not job:
         return jsonify({'error': 'Job not found'}), 404
     return jsonify({k: job.get(k) for k in ('status', 'error', 'filename', 'progress')})
+
 
 @app.route('/download/<job_id>')
 def download_file(job_id):
@@ -325,6 +687,10 @@ def download_file(job_id):
     return send_file(path, as_attachment=True, download_name=safe, mimetype=mime)
 
 
+_start_time = time.time()
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    debug = os.environ.get('FLASK_DEBUG', '').lower() in ('1', 'true')
+    log.info('Starting TikSave v2.0 on port %d', port)
+    app.run(host='0.0.0.0', port=port, debug=debug)
