@@ -181,27 +181,16 @@ def fetch_video_info(url):
 
 
 def get_download_urls(data, source, fmt, quality):
-    if source == 'tikwm':
-        if fmt == 'mp3':
-            return data.get('music') or data.get('play'), None
-        elif quality == 'sd':
-            return data.get('play') or data.get('hdplay'), None
-        else:
-            return data.get('hdplay') or data.get('play'), None
-
-    elif source == 'snaptik':
-        if fmt == 'mp3':
-            return data.get('music', {}).get('url') or data.get('audio'), None
-        video = data.get('video') or data.get('play') or data.get('download')
-        if isinstance(video, dict):
-            if quality == 'hd' and video.get('hd'):
-                return video['hd'], None
-            return video.get('sd') or video.get('url'), None
-        return video, None
+    if source == 'snaptik':
+        url = data.get('download_url', '')
+        return url or None, None
 
     elif source == 'ytdlp':
         if fmt == 'mp3':
             return None, 'audio'
+        url = data.get('url', '')
+        if url:
+            return url, None
         formats = data.get('formats', [])
         best = None
         for f in formats:
@@ -216,49 +205,25 @@ def get_download_urls(data, source, fmt, quality):
 
 
 def _extract_title(data, source):
-    if source == 'tikwm':
-        return data.get('title', '') or data.get('desc', '') or 'TikTok Video'
-    elif source == 'snaptik':
-        return data.get('title', '') or data.get('desc', '') or 'TikTok Video'
-    elif source == 'ytdlp':
+    if source == 'ytdlp':
         return data.get('title', '') or 'TikTok Video'
-    return 'TikTok Video'
+    return data.get('title', '') or 'TikTok Video'
 
 
 def _extract_thumbnail(data, source):
-    if source == 'tikwm':
-        return data.get('cover', '') or data.get('origin_cover', '')
-    elif source == 'snaptik':
-        return data.get('cover', '') or data.get('thumbnail', '')
-    elif source == 'ytdlp':
+    if source == 'ytdlp':
         return data.get('thumbnail', '')
-    return ''
+    return data.get('thumbnail', '') or ''
 
 
 def _extract_uploader(data, source):
-    if source == 'tikwm':
-        author = data.get('author')
-        if isinstance(author, dict):
-            return author.get('nickname', '')
-        return ''
-    elif source == 'snaptik':
-        author = data.get('author', '')
-        if isinstance(author, dict):
-            return author.get('nickname', '') or author.get('name', '')
-        return str(author) if author else ''
-    elif source == 'ytdlp':
+    if source == 'ytdlp':
         return data.get('uploader', '') or data.get('channel', '')
-    return ''
+    return data.get('author', '') or ''
 
 
 def _extract_duration(data, source):
-    duration = 0
-    if source == 'tikwm':
-        duration = data.get('duration', 0) or 0
-    elif source == 'snaptik':
-        duration = data.get('duration', 0) or 0
-    elif source == 'ytdlp':
-        duration = data.get('duration', 0) or 0
+    duration = data.get('duration', 0) or 0
     m, s = divmod(int(duration), 60)
     return f'{m}:{s:02d}' if duration else '—', int(duration)
 
@@ -555,7 +520,7 @@ def health():
     deps = {
         'ffmpeg': _find_ffmpeg() is not None,
         'yt-dlp': YT_DLP_AVAILABLE,
-        'tikwm_api': True,
+        'snaptik_api': True,
         'download_dir': os.path.isdir(DOWNLOAD_DIR),
     }
     all_ok = all(deps.values())
