@@ -233,6 +233,13 @@ def ytdlp_info(url):
 
 
 def fetch_video_info(url):
+    # tikwm first — it's TikTok-specific and returns explicit HD/SD/MP3 URLs that
+    # are always direct video (or audio) files. Avoids the "audio-only file" trap
+    # yt-dlp can fall into with TikTok's mixed format list.
+    data0, err0 = tikwm_info(url)
+    if data0:
+        return data0, 'tikwm', None
+
     data, err = ytdlp_info(url)
     if data:
         return data, 'ytdlp', None
@@ -241,10 +248,27 @@ def fetch_video_info(url):
     if data2:
         return data2, 'snaptik', None
 
-    return None, None, err or err2 or 'All download sources failed.'
+    return None, None, err0 or err or err2 or 'All download sources failed.'
 
 
 def get_download_urls(data, source, fmt, quality):
+    if source == 'tikwm':
+        # tikwm gives us labelled streams. Pick by user's choice; fall back through
+        # the list so we always return SOMETHING playable.
+        downloads = data.get('downloads', []) or []
+        by_label = {d['label']: d['url'] for d in downloads if d.get('url')}
+        if fmt == 'mp3':
+            return by_label.get('MP3 (audio only)') or data.get('download_url'), 'direct_audio'
+        # Video paths: prefer no-WM (hdplay or play), fall back to wmplay if needed.
+        if quality == 'sd':
+            order = ['MP4 (no watermark)', 'HD MP4 (no watermark)', 'MP4 (with watermark)']
+        else:
+            order = ['HD MP4 (no watermark)', 'MP4 (no watermark)', 'MP4 (with watermark)']
+        for label in order:
+            if by_label.get(label):
+                return by_label[label], None
+        return data.get('download_url'), None
+
     if source == 'snaptik':
         url = data.get('download_url', '')
         return url or None, None
@@ -427,19 +451,37 @@ def do_download(job_id, url, title, fmt, quality):
         if source == 'ytdlp':
             yt_path = os.path.join(DOWNLOAD_DIR, f'{file_id}_yt.%(ext)s')
             try:
+                # Force a stream that ACTUALLY contains video. Plain `-f best` on TikTok
+                # can match an audio-only entry, which is why downloads were ending up
+                # as audio-only files. `--merge-output-format mp4` guarantees the merged
+                # extension is .mp4 when bv*+ba is selected.
+                if quality == 'sd':
+                    fmt_sel = 'bv*[height<=480]+ba/b[height<=480][vcodec!=none]/bv*+ba/b[vcodec!=none]'
+                else:
+                    fmt_sel = 'bv*+ba/b[vcodec!=none]/best'
                 subprocess.run(
-                    ['yt-dlp', '-f', 'best', '-o', yt_path,
-                     url, '--no-warnings'],
+                    ['yt-dlp', '-f', fmt_sel, '--merge-output-format', 'mp4',
+                     '-o', yt_path, url, '--no-warnings'],
                     capture_output=True, timeout=180
                 )
-                expected = os.path.join(DOWNLOAD_DIR, f'{file_id}_yt.{out_ext}')
+                # Prefer the .mp4 if present; otherwise pick a file that actually has video.
+                expected = os.path.join(DOWNLOAD_DIR, f'{file_id}_yt.mp4')
                 if not os.path.exists(expected):
-                    for f_glob in glob.glob(os.path.join(DOWNLOAD_DIR, f'{file_id}_yt.*')):
-                        expected = f_glob
-                        break
+                    candidates = sorted(
+                        glob.glob(os.path.join(DOWNLOAD_DIR, f'{file_id}_yt.*')),
+                        # Prefer mp4 / mkv / webm over audio-only m4a / mp3 / opus / aac.
+                        key=lambda p: (0 if p.endswith(('.mp4', '.mkv', '.webm', '.mov')) else 1, p),
+                    )
+                    expected = candidates[0] if candidates else expected
                 if not os.path.exists(expected):
                     _set_job(job_id, {'status': 'error', 'error': 'Download via yt-dlp failed.'})
                     return
+                # Sanity-check: if the file landed with an audio-only extension, treat as failure
+                # so the snaptik fallback can take over.
+                if expected.lower().endswith(('.m4a', '.mp3', '.opus', '.aac', '.ogg', '.wav')):
+                    try: os.remove(expected)
+                    except OSError: pass
+                    raise RuntimeError('yt-dlp returned audio-only file')
                 _set_job(job_id, {'progress': 90})
                 if fmt == 'mp3' and out_ext == 'mp4':
                     mp3_path = os.path.join(DOWNLOAD_DIR, f'{file_id}_audio.mp3')
@@ -462,8 +504,19 @@ def do_download(job_id, url, title, fmt, quality):
                 schedule_cleanup(job_id, out_path)
                 return
             except Exception as e:
-                _set_job(job_id, {'status': 'error', 'error': 'yt-dlp download failed.'})
-                return
+                # yt-dlp couldn't produce a video file (e.g., it returned audio only,
+                # or download itself failed). Fall back to snaptik so the user still
+                # gets the video they asked for.
+                logging.warning(f'yt-dlp video path failed ({e}); trying snaptik fallback')
+                snap_data, snap_err = snaptik_info(url)
+                if not snap_data or not snap_data.get('download_url'):
+                    _set_job(job_id, {'status': 'error',
+                                       'error': 'Video download failed (yt-dlp returned audio only, snaptik fallback also failed).'})
+                    return
+                source = 'snaptik'
+                data = snap_data
+                src_url = snap_data['download_url']
+                # Fall through to the snaptik download path below.
 
         download_stream(src_url, tmp_path, job_id)
         _set_job(job_id, {'progress': 92})
