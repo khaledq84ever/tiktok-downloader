@@ -259,11 +259,11 @@ def get_download_urls(data, source, fmt, quality):
         by_label = {d['label']: d['url'] for d in downloads if d.get('url')}
         if fmt == 'mp3':
             return by_label.get('MP3 (audio only)') or data.get('download_url'), 'direct_audio'
-        # Video paths: prefer no-WM (hdplay or play), fall back to wmplay if needed.
-        if quality == 'sd':
-            order = ['MP4 (no watermark)', 'HD MP4 (no watermark)', 'MP4 (with watermark)']
-        else:
-            order = ['HD MP4 (no watermark)', 'MP4 (no watermark)', 'MP4 (with watermark)']
+        # Video paths: prefer H.264 over HEVC ALWAYS, regardless of HD/SD pick.
+        # tikwm's "HD MP4" is HEVC (~30% browser support); plain "MP4" is H.264 720p
+        # (plays everywhere). HEVC files were silently downloading as "audio only" in
+        # the user's player because the video stream couldn't be decoded.
+        order = ['MP4 (no watermark)', 'MP4 (with watermark)', 'HD MP4 (no watermark)']
         for label in order:
             if by_label.get(label):
                 return by_label[label], None
@@ -347,10 +347,24 @@ def _find_ffmpeg():
     return nix[0] if nix else None
 
 
-def make_filename(title, ext='mp4'):
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', title or 'tiktok').strip()
-    name = re.sub(r'\s+', ' ', name)
-    return (name[:80] or 'tiktok') + '.' + ext
+def make_filename(title, ext='mp4', url=''):
+    """Build a filesystem-safe filename. ALWAYS appends a short id derived from
+    the source URL so two videos with no caption don't both become 'tiktok.mp4'
+    and overwrite each other in the user's Downloads folder."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', title or '').strip()
+    name = re.sub(r'\s+', ' ', name)[:60]
+    # Extract a stable short id from the TikTok URL (the numeric video id, or
+    # vm.tiktok.com short code). Falls back to a random 6-char tag.
+    vid = ''
+    if url:
+        m = re.search(r'/video/(\d+)', url) or re.search(r'/(?:v|t)/(\w+)', url) \
+            or re.search(r'tiktok\.com/(\w{8,})', url)
+        if m:
+            vid = m.group(1)[-8:]
+    if not vid:
+        vid = uuid.uuid4().hex[:6]
+    base = (name + ' ' if name else '') + vid
+    return base[:80] + '.' + ext
 
 
 def _set_job(job_id, updates):
@@ -431,7 +445,7 @@ def do_download(job_id, url, title, fmt, quality):
                 if not os.path.exists(actual):
                     _set_job(job_id, {'status': 'error', 'error': 'Audio extraction failed.'})
                     return
-                filename = make_filename(title or _extract_title(data, source) or 'tiktok', 'mp3')
+                filename = make_filename(title or _extract_title(data, source) or 'tiktok', 'mp3', url)
                 _set_job(job_id, {'status': 'done', 'file': actual,
                                    'filename': filename, 'progress': 100})
                 schedule_cleanup(job_id, actual)
@@ -498,7 +512,7 @@ def do_download(job_id, url, title, fmt, quality):
                         out_path = expected
                 else:
                     out_path = expected
-                filename = make_filename(title or _extract_title(data, source) or 'tiktok', out_ext)
+                filename = make_filename(title or _extract_title(data, source) or 'tiktok', out_ext, url)
                 _set_job(job_id, {'status': 'done', 'file': out_path,
                                    'filename': filename, 'progress': 100})
                 schedule_cleanup(job_id, out_path)
@@ -535,7 +549,7 @@ def do_download(job_id, url, title, fmt, quality):
             else:
                 log.warning('ffmpeg not found, serving mp4 as fallback for mp3 request')
 
-        filename = make_filename(title or _extract_title(data, source) or 'tiktok', out_ext)
+        filename = make_filename(title or _extract_title(data, source) or 'tiktok', out_ext, url)
         _set_job(job_id, {'status': 'done', 'file': tmp_path,
                            'filename': filename, 'progress': 100})
         schedule_cleanup(job_id, tmp_path)
@@ -755,7 +769,7 @@ def get_direct():
             if inner:
                 direct_url = (BASE_PATH + '/stream?u=' +
                               urllib.parse.quote(inner, safe='') +
-                              '&n=' + urllib.parse.quote(make_filename(info.get('title') or 'tiktok', 'mp4'), safe=''))
+                              '&n=' + urllib.parse.quote(make_filename(info.get('title') or 'tiktok', 'mp4', url), safe=''))
                 title     = info.get('title') or ''
                 thumbnail = info.get('thumbnail') or ''
                 uploader  = info.get('uploader') or info.get('channel') or ''
@@ -785,7 +799,7 @@ def get_direct():
         'uploader':     uploader,
         'duration':     duration_str,
         'duration_sec': duration_sec,
-        'filename':     make_filename(title, 'mp4'),
+        'filename':     make_filename(title, 'mp4', url),
         'source':       source,
     })
 
