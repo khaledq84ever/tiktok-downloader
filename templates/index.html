@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#010101" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>TikSave — TikTok Video Downloader</title>
   <meta name="description" content="Download TikTok videos without watermark. Free, fast, no signup required." />
   <meta property="og:title" content="TikSave — TikTok Video Downloader" />
@@ -13,6 +17,14 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { font-size: 16px; scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+
+    /* Mobile: no 300ms tap delay, no blue tap flash, no callout. */
+    button, a, input, .q-btn {
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    html, body { -webkit-touch-callout: none; }
+    input, textarea { -webkit-touch-callout: default; -webkit-user-select: text; user-select: text; }
 
     :root {
       --bg:        #010101;
@@ -37,9 +49,12 @@
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
+      /* 100dvh handles iOS Safari's collapsing URL bar; 100vh is the fallback. */
       min-height: 100vh;
+      min-height: 100dvh;
       display: flex; flex-direction: column;
       -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
 
     body::before {
@@ -65,7 +80,9 @@
 
     /* ── Header ── */
     header {
-      padding: clamp(10px,2vw,18px) 16px 0;
+      padding: max(clamp(10px,2vw,18px), env(safe-area-inset-top)) 16px 0;
+      padding-left: max(16px, env(safe-area-inset-left));
+      padding-right: max(16px, env(safe-area-inset-right));
       text-align: center;
     }
 
@@ -192,7 +209,23 @@
       display: none; align-items: center; justify-content: center;
       transition: color 0.2s, background 0.2s;
     }
-    .btn-clear:hover { color: var(--text); background: var(--border); }
+    @media (hover: hover) and (pointer: fine) {
+      .btn-clear:hover { color: var(--text); background: var(--border); }
+      .btn-paste:hover { border-color: var(--accent); color: var(--text); background: var(--surface3); }
+      .btn-primary:hover { opacity: 0.9; box-shadow: 0 6px 24px rgba(254,44,85,0.5); }
+      .q-btn:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
+      .btn-retry:hover { background: var(--danger); color: #fff; }
+      .btn-download:hover { opacity: 0.92; }
+      .btn-copy-link:hover { border-color: var(--accent); color: var(--text); }
+      .btn-share:hover { border-color: var(--accent2); color: var(--text); }
+      .btn-reset:hover { border-color: var(--accent); color: var(--text); }
+      .footer-handle:hover { opacity: 0.72; }
+    }
+    /* Tap-press feedback for touch + mouse. */
+    .btn-primary:active { transform: scale(0.97); }
+    .btn-paste:active, .q-btn:active, .btn-download:active,
+    .btn-copy-link:active, .btn-share:active, .btn-reset:active,
+    .btn-retry:active, .btn-clear:active { transform: scale(0.97); }
 
     .btn-paste {
       flex-shrink: 0;
@@ -203,7 +236,6 @@
       cursor: pointer; white-space: nowrap; min-height: 46px;
       transition: border-color 0.2s, color 0.2s, background 0.2s;
     }
-    .btn-paste:hover { border-color: var(--accent); color: var(--text); background: var(--surface3); }
 
     .btn-primary {
       flex-shrink: 0;
@@ -215,8 +247,6 @@
       box-shadow: 0 4px 18px rgba(254,44,85,0.35);
       transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
     }
-    .btn-primary:hover { opacity: 0.9; box-shadow: 0 6px 24px rgba(254,44,85,0.5); }
-    .btn-primary:active { transform: scale(0.98); }
     .btn-primary:disabled { opacity: 0.38; cursor: not-allowed; box-shadow: none; }
 
     /* ── Format selector ── */
@@ -245,7 +275,6 @@
       display: flex; flex-direction: column; align-items: center; gap: 3px;
       transition: border-color 0.2s, color 0.2s, background 0.2s, transform 0.15s;
     }
-    .q-btn:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
 
     .q-title { font-size: 0.85rem; font-weight: 800; line-height: 1.2; }
     .q-sub   { font-size: 0.66rem; font-weight: 600; opacity: 0.75; }
@@ -285,7 +314,6 @@
       font-family: inherit; font-size: 0.8rem; font-weight: 700;
       cursor: pointer; transition: background 0.2s, color 0.2s;
     }
-    .btn-retry:hover { background: var(--danger); color: #fff; }
 
     /* ── Video card ── */
     .video-card {
@@ -387,7 +415,6 @@
       box-shadow: 0 4px 18px rgba(16,185,129,0.28);
       transition: opacity 0.2s;
     }
-    .btn-download:hover { opacity: 0.92; }
     .btn-download.pulse { animation: pulse-glow 1.8s ease-in-out infinite; }
     .btn-download svg { width: 20px; height: 20px; flex-shrink: 0; }
 
@@ -403,7 +430,6 @@
       min-height: 42px;
       transition: border-color 0.2s, color 0.2s, background 0.2s;
     }
-    .btn-copy-link:hover { border-color: var(--accent); color: var(--text); }
     .btn-copy-link.copied { color: var(--success); border-color: var(--success); }
 
     .btn-share {
@@ -416,7 +442,6 @@
       min-height: 42px;
       transition: border-color 0.2s, color 0.2s;
     }
-    .btn-share:hover { border-color: var(--accent2); color: var(--text); }
 
     .btn-reset {
       width: 100%; padding: 10px;
@@ -426,7 +451,6 @@
       cursor: pointer; min-height: 42px; display: none; margin-top: 7px;
       transition: border-color 0.2s, color 0.2s;
     }
-    .btn-reset:hover { border-color: var(--accent); color: var(--text); }
 
     /* ── Footer ── */
     footer {
@@ -455,7 +479,6 @@
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
       text-decoration: none; transition: opacity 0.2s;
     }
-    .footer-handle:hover { opacity: 0.72; }
 
     /* ── Responsive ── */
     @media (min-width: 640px) {
@@ -463,27 +486,61 @@
     }
 
     @media (max-width: 639px) {
-      main   { padding: 12px 12px 16px; }
-      header { padding: 10px 12px 0; }
+      footer {
+        padding: 10px 12px;
+        padding-bottom: max(10px, env(safe-area-inset-bottom));
+        padding-left: max(12px, env(safe-area-inset-left));
+        padding-right: max(12px, env(safe-area-inset-right));
+        gap: 8px;
+      }
+      main   { padding: 12px 12px 16px;
+               padding-left: max(12px, env(safe-area-inset-left));
+               padding-right: max(12px, env(safe-area-inset-right)); }
+      header { padding: max(10px, env(safe-area-inset-top)) 12px 0; }
       .logo-icon { width: 32px; height: 32px; font-size: 0.95rem; }
       .converter { margin-top: 14px; }
       .input-card { padding: 6px; gap: 5px; }
-      .url-input  { padding: 11px 6px 11px 10px; font-size: 0.95rem; }
-      .btn-paste  { padding: 9px 12px; font-size: 0.8rem; min-height: 42px; }
-      .btn-primary{ padding: 11px 16px; min-height: 42px; font-size: 0.9rem; }
-      .q-btn      { padding: 9px 4px 8px; }
-      .q-title    { font-size: 0.78rem; }
-      .q-sub      { font-size: 0.6rem; }
+      /* IMPORTANT: input must be >= 16px on iOS or Safari auto-zooms on focus. */
+      .url-input  { padding: 12px 8px 12px 12px; font-size: 16px; min-height: 44px; }
+      .btn-paste  { padding: 10px 14px; font-size: 0.82rem; min-height: 44px; }
+      .btn-primary{ padding: 11px 16px; min-height: 44px; font-size: 0.92rem; }
+      .btn-clear  { width: 40px; height: 40px; font-size: 0.9rem; }
+      .q-btn      { padding: 10px 4px 9px; min-height: 56px; }
+      .q-title    { font-size: 0.82rem; }
+      .q-sub      { font-size: 0.62rem; }
       .video-card-inner { gap: 10px; padding: 10px; }
       .video-thumb { width: 60px; height: 94px; }
       .card-actions { padding: 0 10px 10px; }
-      footer { gap: 8px; padding: 10px 12px; }
       .footer-copy { display: none; }
+      body::before { background-size: 32px 32px; opacity: 0.5; }
     }
 
-    @media (max-width: 380px) {
-      .btn-paste { display: none; }
-      .btn-primary { flex: 1; }
+    /* Very narrow phones: URL on its own row, buttons share the row below. */
+    @media (max-width: 420px) {
+      .input-card { flex-wrap: wrap; padding: 8px; gap: 8px; }
+      .url-input  { flex: 1 1 100%; order: 1; padding: 13px 14px; }
+      .btn-clear  { order: 2; }
+      .btn-paste  { order: 3; flex: 1 1 0; min-width: 0; }
+      .btn-primary{ order: 4; flex: 2 1 0; min-width: 0; font-size: 1rem; }
+      .btn-row { flex-direction: column; }
+      .btn-copy-link, .btn-share { flex: 1; width: 100%; }
+    }
+
+    /* Landscape phones: hide hero, tighten padding. */
+    @media (max-height: 480px) and (orientation: landscape) {
+      header { padding-top: 6px; }
+      main { padding-top: 6px; padding-bottom: 6px; }
+      .hero { display: none; }
+      .converter { margin-top: 0; }
+    }
+
+    /* Respect reduced-motion preference. */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+      }
     }
   </style>
 </head>
