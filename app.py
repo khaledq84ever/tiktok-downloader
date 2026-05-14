@@ -818,6 +818,9 @@ def stream_proxy():
     if not any(host.endswith(h) for h in (
         'tiktokcdn.com', 'tiktokcdn-us.com', 'tiktokcdn-eu.com',
         'tiktokv.com', 'tiktok.com', 'byteoversea.com', 'muscdn.com',
+        # tikwm sometimes returns relative URLs that get prefixed with tikwm.com,
+        # so allow it through. The handler still sets Content-Disposition: attachment.
+        'tikwm.com',
     )):
         return jsonify({'error': 'Source host not allowed'}), 400
 

@@ -398,6 +398,7 @@
     }
 
     /* ── Download button ── */
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     @keyframes pulse-glow {
       0%,100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.5), 0 6px 22px rgba(16,185,129,0.28); }
       50%      { box-shadow: 0 0 0 14px rgba(16,185,129,0), 0 6px 22px rgba(16,185,129,0.14); }
@@ -711,6 +712,41 @@
     $('urlInput').disabled = on;
   }
 
+  // Reliable cross-browser download: fetch as Blob, click an <a> at the blob URL.
+  // This is the only approach that consistently triggers a real "Save File" dialog
+  // on iOS Safari 13+ and Chrome Android instead of opening the MP4 inline.
+  async function triggerDownload(url, filename, button) {
+    const originalHtml = button ? button.innerHTML : null;
+    try {
+      if (button) {
+        button.innerHTML = '<span style="display:inline-block;animation:spin 0.8s linear infinite">⟳</span> Preparing…';
+        button.style.pointerEvents = 'none';
+      }
+      const res = await fetch(url, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Revoke after a moment so the browser has time to start the save.
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+    } catch (err) {
+      // Blob path failed (offline, CORS, OOM on huge file) — fall back to a
+      // plain navigation. Better to open the file than show nothing.
+      window.location.href = url;
+    } finally {
+      if (button && originalHtml !== null) {
+        button.innerHTML = originalHtml;
+        button.style.pointerEvents = '';
+      }
+    }
+  }
+
   function _safeName(title, ext) {
     const safe = (title || 'tiktok').replace(/[\\/:*?"<>|]+/g, ' ')
       .replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -745,10 +781,15 @@
       const a = document.createElement('a');
       const isAudio = dl.kind === 'audio';
       const isWM    = /watermark\)/i.test(dl.label) && !/no/i.test(dl.label);
-      a.href = dl.url;
-      a.target = '_blank';
+      const filename = _safeName(d.title, dl.ext || 'mp4');
+      // Route the CDN URL through our /stream proxy so the response has
+      // Content-Disposition: attachment and is same-origin (lets us use the
+      // blob-download trick that works on iOS Safari & Chrome Android).
+      const proxiedUrl = BASE_PATH + '/stream?u=' + encodeURIComponent(dl.url) +
+                                   '&n=' + encodeURIComponent(filename);
+      a.href = proxiedUrl;
       a.rel = 'noopener';
-      a.download = _safeName(d.title, dl.ext || 'mp4');
+      a.download = filename;
       a.style.cssText = [
         'display:flex','align-items:center','justify-content:center','gap:10px',
         'padding:13px 14px','min-height:50px',
@@ -761,10 +802,15 @@
           : 'background:linear-gradient(135deg,var(--success),#059669);color:#fff;box-shadow:0 4px 18px rgba(16,185,129,0.28)',
       ].join(';');
       a.innerHTML = `<span style="width:18px;height:18px;display:inline-flex;flex-shrink:0">${_dlIcon()}</span><span>${dl.label}</span>`;
+      a.onclick = (e) => {
+        e.preventDefault();
+        triggerDownload(proxiedUrl, filename, a);
+      };
       actions.appendChild(a);
       if (idx === 0) {
-        currentDownloadUrl = dl.url;
-        setTimeout(() => a.click(), 100);
+        currentDownloadUrl = proxiedUrl;
+        // Do NOT auto-click on mobile — it opens the video inline in a new tab
+        // instead of downloading. User taps the visible button.
       }
     });
 
@@ -895,26 +941,39 @@
         if (data.status === 'done') {
           clearInterval(pollTimer); clearInterval(grow); clearInterval(msgCycle);
           $('progressBar').style.width = '100%';
-          $('statusText').textContent  = '✓ Done! Starting download…';
+          $('statusText').textContent  = '✓ Ready! Tap Download below.';
 
           setTimeout(() => {
             $('progressWrap').style.display = 'none';
             $('statusText').style.display   = 'none';
 
             const dlUrl = BASE_PATH + `/download/${jobId}`;
+            const filename = data.filename || 'tiktok.mp4';
             currentDownloadUrl = dlUrl;
 
-            const tmp = document.createElement('a');
-            tmp.href = dlUrl; tmp.download = data.filename || 'tiktok.mp4';
-            document.body.appendChild(tmp); tmp.click(); document.body.removeChild(tmp);
+            // NOTE: do NOT auto-click a programmatic <a download> here.
+            // On iOS Safari (and some Chrome Android versions) the `download`
+            // attribute is ignored for programmatic clicks, which causes the
+            // browser to navigate to the MP4 URL and open it inline as a video
+            // player — which looks like "audio only opened in a new tab" to
+            // the user. Auto-download is a "nice to have" on desktop but flat
+            // out broken on mobile, so we let the user tap the button below.
 
             const dl = $('btnDownload');
-            dl.href = dlUrl; dl.download = data.filename || 'tiktok.mp4';
+            dl.href = dlUrl;
+            dl.download = filename;
             const label = selectedFmt === 'mp3' ? 'Download MP3' : 'Download MP4';
             dl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> ${label}`;
             dl.style.display = 'flex';
             dl.classList.add('pulse');
             setTimeout(() => dl.classList.remove('pulse'), 7000);
+
+            // Intercept the click and route through the blob-download path,
+            // which works reliably on iOS Safari 13+ and modern Chrome Android.
+            dl.onclick = (e) => {
+              e.preventDefault();
+              triggerDownload(dlUrl, filename, dl);
+            };
 
             $('btnCopyLink').style.display = 'flex';
             if (navigator.share) $('btnShare').style.display = 'flex';
