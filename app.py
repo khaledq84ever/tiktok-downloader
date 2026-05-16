@@ -692,6 +692,18 @@ def robots():
     return 'User-agent: *\nAllow: /\n', 200, {'Content-Type': 'text/plain'}
 
 
+# Self-unregistering service worker — defends against stale SW from old deploys
+# that can intercept /download and break the blob-fetch on mobile.
+@app.route('/sw.js')
+def sw_js():
+    return ("self.addEventListener('install',e=>self.skipWaiting());"
+            "self.addEventListener('activate',e=>e.waitUntil("
+            "self.registration.unregister().then(()=>self.clients.matchAll())"
+            ".then(c=>c.forEach(x=>x.navigate(x.url)))));",
+            200, {'Content-Type': 'application/javascript',
+                  'Cache-Control': 'no-store'})
+
+
 @app.route('/info', methods=['POST'])
 def get_info():
     if not _check_rate(_client_ip()):
