@@ -248,6 +248,13 @@ def fetch_video_info(url):
     if data2:
         return data2, 'snaptik', None
 
+    # All 3 backends failed. tikwm's "Url parsing is failed!" is misleading —
+    # it usually means the video was deleted/private/region-locked, not that
+    # OUR parser is broken. Rewrite to something the user can act on.
+    raw = (err0 or err or err2 or 'All download sources failed.').lower()
+    if 'url parsing' in raw or 'not exist' in raw or 'not found' in raw \
+       or 'private' in raw or 'unavailable' in raw or 'region' in raw:
+        return None, None, 'Video unavailable — may be deleted, private, or region-locked. Try a different link.'
     return None, None, err0 or err or err2 or 'All download sources failed.'
 
 
