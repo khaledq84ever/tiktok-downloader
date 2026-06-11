@@ -907,7 +907,8 @@ def get_status(job_id):
 
 
 @app.route('/download/<job_id>')
-def download_file(job_id):
+@app.route('/download/<job_id>/<path:_fname>')
+def download_file(job_id, _fname=None):
     with jobs_lock:
         job = jobs.get(job_id)
     if not job:
