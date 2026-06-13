@@ -11,6 +11,8 @@ import subprocess
 import uuid
 import signal
 import urllib.parse
+import socket
+import ipaddress
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -396,11 +398,33 @@ def schedule_cleanup(job_id, path):
     threading.Thread(target=_cleanup, daemon=True).start()
 
 
+def _host_is_allowed(url, domain):
+    """Host must be exactly `domain` or a subdomain of it, over http(s). Closes the
+    SSRF where the allowlist regex matched the domain inside a path/query of an
+    attacker- or internal-pointing URL (e.g. http://169.254.169.254/tiktok.com/x)."""
+    try:
+        p = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    if p.scheme not in ('http', 'https'):
+        return False
+    host = (p.hostname or '').rstrip('.').lower()
+    if not (host == domain or host.endswith('.' + domain)):
+        return False
+    try:  # defense in depth: reject hosts that resolve to non-public IPs
+        for info in socket.getaddrinfo(host, None):
+            ip = ipaddress.ip_address(info[4][0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+                return False
+    except Exception:
+        pass
+    return True
+
+
 def is_valid_url(url):
-    return bool(re.search(
-        r'(?:https?://)?(?:www\.|vm\.|vt\.|m\.)?tiktok\.com',
-        url, re.I
-    ))
+    u = url if url.startswith('http') else 'https://' + url
+    return _host_is_allowed(u, 'tiktok.com')
 
 
 def normalize_url(url):
